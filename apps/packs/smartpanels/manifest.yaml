@@ -1,0 +1,27 @@
+id: smartpanels
+name: SmartPanels
+description: Log in, open dashboard, and control rooms (lights/fans) via Smart Panel API.
+base_url: https://smartpanel.ssevsoftsols.co.in
+tools:
+  - smartpanels_status
+  - smartpanels_login
+  - smartpanels_open
+  - smartpanels_logout
+  - smartpanels_rooms
+  - smartpanels_set_room
+secrets:
+  keys:
+    - SMARTPANELS_USER
+    - SMARTPANELS_PASSWORD
+    - SMARTPANELS_BASE_URL
+  example_lines:
+    - "# SmartPanels credentials — never commit real values"
+    - "SMARTPANELS_USER="
+    - "SMARTPANELS_PASSWORD="
+    - "SMARTPANELS_BASE_URL=https://smartpanel.ssevsoftsols.co.in"
+voice_phrases:
+  - log into SmartPanel
+  - open SmartPanel
+  - turn on the meeting room
+  - turn off the meeting room
+safety_level: L2

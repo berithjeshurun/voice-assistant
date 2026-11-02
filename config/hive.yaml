@@ -1,0 +1,751 @@
+# Hive ecosystem configuration (single file — all profiles).
+# Search order: HIVE_CONFIG → ./config.yaml → $PYHIVE_HOME/config.yaml → package defaults.
+# Profiles: --profile research|general|voice|autonomy|default  (default = top-level below)
+# Env vars (PYHIVE_*, HIVE_PLAN_FIRST) still override when set.
+
+hive:
+  # HiveSTEAM pack root (binaries/mdl/vce, …). Applied as PYHIVE_HOME on CLI start.
+  # null → discover G:\HiveSTEAM / … or fall back to ~/.pyhive
+  home: G:\HiveSTEAM
+
+assemble:
+  memory: false
+  steam: false
+  web: true
+  skills: true
+  coding: true
+  workers: true
+  playground: false
+  # A+B+C integrations (soft-SKIP when sidecars down)
+  integrations: true
+  wiki: true
+  mcp: false
+
+integrations:
+  rea: { enabled: true }
+  weknora: { enabled: true }
+  openwhispr: { enabled: true }
+  voicestudio: { enabled: true }
+  higgsfield: { enabled: true }
+  openseo: { enabled: true }
+  chatwoot: { enabled: true }
+  openproject: { enabled: true }
+  cap: { enabled: true }
+  homeassistant: { enabled: true }
+  presence_bridge: { enabled: true }
+
+# Optional MCP servers (enable assemble.mcp / mcp.enabled)
+mcp:
+  enabled: false
+  servers:
+    # rea:
+    #   command: npx
+    #   args: ["-y", "rea-agents@latest", "mcp"]
+    #   enabled: true
+
+agent:
+  # Step budget for the ReAct / plan loop
+  steps:
+    # fixed  — always use max / wall_seconds below
+    # dynamic — size from goal domain (see dynamic: table); max is the ceiling/default
+    mode: dynamic
+    max: 12
+    wall_seconds: 300
+    dynamic:
+      code: { max_steps: 5, wall_seconds: 120 }
+      search: { max_steps: 5, wall_seconds: 90 }
+      explore: { max_steps: 8, wall_seconds: 180 }
+      general: { max_steps: 6, wall_seconds: 120 }
+      media: { max_steps: 8, wall_seconds: 180 }
+
+  # Default agent mode: divide the goal into a step board, finish one Focus step at a time
+  plan_first:
+    enabled: true
+    # auto | skip | direct | full  (auto = classify_goal)
+    default_mode: auto
+    # Within a run: after one board Focus step completes, stop that turn's tool burst
+    one_step_per_turn: true
+    # If true, agent.run returns after one board step (caller re-runs for the next)
+    one_step_per_run: false
+
+  # Phase A: LLM picks tools step-by-step from a compact catalog (no domain hard routes).
+  # Phase B: ReAct shortlist = planned tools only.
+  tool_plan:
+    enabled: true
+    max_steps: 6
+    catalog_desc_chars: 120
+
+  shortlist_top_k: 10
+  use_selector: true
+  verbose: true
+
+  hci:
+    strict: true
+    # Modular penalty ledger on each agent_hci snapshot (observe/audit)
+    penalties:
+      enabled: true
+    # SessionGovernor — tracks HCI + penalties; adjusts knobs only when enabled
+    # Default observe-only (enabled: false). Set true for closed-loop shortlist/plan.
+    governor:
+      enabled: false
+      on_grade_d:
+        shrink_shortlist: true
+        max_shortlist: 6
+      on_grade_f:
+        shrink_shortlist: true
+        max_shortlist: 4
+      on_step_pressure:
+        prefer_plan_focus: true
+      on_thrash:
+        shrink_shortlist: true
+        max_shortlist: 6
+
+model:
+  # Stack-wide default model (library code does NOT hardcode a tag).
+  # Override order: --model → PYHIVE_MODEL → profiles.<name>.model.spec → this spec
+  # Remote Ollama via SSH — tag must exist on the remote host
+  spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+  # Sampling — low temp = stricter; ambient profile forces think: false for voice
+  temperature: 0.1
+  top_p: 0.8
+  max_tokens: 1536
+  think: false
+
+  # Where Ollama (or any OpenAI-compat server) lives.
+  # Env PYHIVE_LLM_BASE_URL still overrides when set.
+  # Password: PYHIVE_SSH_PASSWORD in .env (never commit).
+  endpoint:
+    # local — this machine (default http://127.0.0.1:11434/v1)
+    # lan   — another host on the network (set host / port or base_url)
+    # ssh   — OpenSSH local forward to a remote Ollama, then use localhost
+    # url   — use base_url as-is
+    mode: ssh
+
+    base_url: null
+    host: 127.0.0.1
+    port: 11434
+
+    ssh:
+      host: 192.168.68.69
+      user: suhaspampana
+      port: 22
+      identity_file: null
+      remote_host: 127.0.0.1
+      remote_port: 11434
+      local_port: 11435
+      extra_args: []
+
+# ---------------------------------------------------------------------------
+# Progressive ack — YAML = routing/cues only. Spoken lines live in AIML files.
+# Expand phrase banks in .aiml (or a custom root), not by dumping MB into YAML.
+# ---------------------------------------------------------------------------
+assistant:
+  name: Amy
+  # hivepersona — physical + biological dossier (local only)
+  persona:
+    enabled: true
+    face_backend: auto      # opencv | insightface | deepface | auto
+    voice_backend: auto     # resemblyzer | speechbrain | spectral | auto
+    share_biological_with_agent: false
+    gates:
+      life_email_send: { min_role: admin, min_label: confidential }
+      ha_call_service: { min_role: admin, min_label: restricted }
+      persona_set_clearance: { min_role: owner, min_label: restricted }
+  voice:
+    progressive_ack: true
+    ack_timeout_ms: 400
+    ambient:
+      enabled: true
+      wake_phrase: "hey chloe"
+      # Live Whisper phrase wake for "hey chloe" (no custom ONNX required).
+      # Optional OWW ONNX under $PYHIVE_HOME/data/wake/ as fallback only.
+      wake_model: ""
+      engine: auto   # openwakeword | vad | auto (OWW fallback if phrase wake fails)
+      cooldown_ms: 800
+      idle_interval_s: 5
+      allow_act: false
+      # Actionable desk OCR → bounded agent turn (safe; not full danger ACT)
+      # Off: idle OCR agent turns fight the wake path and look like cold reloads.
+      screen_act: false
+      # Amy uses live streaming STT (Vosk + silence VAD) — not WAV dump.
+      # listen_seconds ≈ max utterance length; silence (~0.65s) ends early.
+      listen_seconds: 10
+      # After wake: mic record → enrolled persona voice must match
+      # Off for now: enrolled voice exists but short wake clips fail threshold
+      # (unknown speaker). Re-enable after a clean `hive persona enroll-voice`.
+      require_persona_voice: false
+      require_admin_voice: false
+      # Face gate off until enroll-live is reliable (soft-SKIP still can deny).
+      require_persona_face: false
+      camera_index: 0
+      face_soft_skip: true
+      # Optional palm multi-factor (opt-in; soft-SKIP if no camera)
+      require_persona_palm: false
+      palm_soft_skip: true
+      # Idle desktop snapshot → presence working memory (hivescreen soft-SKIP)
+      screen_every_s: 90
+      # Camera: soft presence bursts (face verify off until enrolled).
+      # Enroll with: hive persona enroll-face  (then set require_persona_face: true)
+      cam_enabled: true
+      cam_every_s: 45
+      cam_burst_k: 3
+      cam_verify_face: false
+
+    # Agent tone when running hive voice (spoken answers) — appended last so it wins
+    system_prompt: >
+      CRITICAL VOICE RULES: You are Amy, a friendly voice assistant on a call.
+      Do NOT call yourself a coding agent or software engineer unless the user asks about code.
+      Answer in short plain spoken sentences. No markdown, bullets, bold, code fences, or emoji.
+      For greetings, "huh", thanks, or unclear speech: at most two short sentences, NO tools.
+      Prefer under forty words unless the user asks for detail.
+      SEARCH: if the user asks to search / look up / find / "search about" anything,
+      you MUST call web_search(query=...) BEFORE any spoken answer. Summarize real hits.
+      NEVER reply with a greeting or "How can I assist you today?" on a search ask.
+      Do NOT open local files or Amy scripts for web/search questions.
+      Never invent links. Never dump skill docs or verification checklists.
+      Never speak REFUSED, UNGROUNDED, or other internal codes.
+      TOOL HONESTY: Never say you are checking or scanning unless you already called a tool.
+      You have a terminal: use run_powershell (or run_shell) for local tasks — e.g. arp -a,
+      Get-NetNeighbor, ipconfig, ping. Do not invent a missing LAN tool; run the commands.
+      Put command results into text; put a short spoken summary into speak.
+    speak:
+      strip_markdown: true
+      max_chars: 420
+      max_sentences: 4
+    # Model must return JSON: {"text": screen, "speak": TTS}
+    dual_response: true
+    ack:
+      default_intent: generic
+      query_intents: [weather, time, search, calendar]
+      context_intents: [weather, time, calendar]
+      # Do NOT include bare "tell me" — it matches "tell me about yourself" and
+      # forces a task ack ("I'll take care of that") instead of chat.
+      factual_cues: [what, when, where, "how much", "how's", "how is"]
+      chat_max_chars: 72
+      min_token_overlap: 2
+      system_prompt: >
+        You are Amy on a voice call. The user just asked you to do something.
+        Reply with ONE short spoken sentence that acknowledges you heard them and
+        that you are handling it now (e.g. dimming brightness, opening a page).
+        Do NOT finish the task in this line. Do NOT use tools. Do NOT invent results.
+        No quotes, no bullet points — just the spoken bridge.
+      context_prefixes:
+        - "I've still got that from earlier — "
+        - "From what I already know — "
+        - "I think I already have this — "
+        - "Quick one from context — "
+      live_hints: [now, "right now", currently, latest, today, tonight, live, update, refresh]
+      force_query:
+        - web search
+        - search the web
+        - use web
+        - using web
+        - look up online
+        - google
+        - detect my location
+        - find my location
+        - use my location
+        - my location
+        - where i am
+        - ip geoloc
+        - brightness
+        - volume
+        - mute
+        - wifi
+        - dark mode
+        - open chrome
+        - open browser
+        - browse
+        - bambu
+        - slicer
+        - printer
+      tool_junk:
+        - "args:"
+        - "arguments:"
+        - "parameters:"
+        - kwargs
+        - "1.0 = unchanged"
+        - adjust brightness
+        - brightness and contrast
+        - tool_call
+        - function call
+      # Exact/phrase chat turns → no progressive "I'll take care of that" ack
+      chat:
+        - hi
+        - hello
+        - hey
+        - thanks
+        - thank you
+        - ok
+        - okay
+        - bye
+        - good morning
+        - good night
+        - how are you
+        - who are you
+        - what are you
+        - tell me about yourself
+        - introduce yourself
+        - goodnight
+        - good night
+        - good morning
+        - goodbye
+        - see you
+        - see you later
+      # python-aiml: keep match_goal false — free-form user text spam "No match found"
+      aiml:
+        enabled: true
+        root: null
+        learn: [ack.aiml]
+        commands: []
+        brain: null
+        save_brain: false
+        intent_prefix: ACK
+        match_goal: false
+        predicates: {}
+      # Tiny emergency lines if AIML is off / missing — keep small
+      fallback_templates:
+        generic:
+          - "One sec — I'll take care of that."
+          - "Sure, working on it."
+          - "On it."
+      # Intent keywords for classify_* only (not spoken banks)
+      intents:
+        weather:
+          keywords: [weather, forecast, temperature, temp, rain, sunny, cloudy, clear, storm, humid, windy, snow, celsius, fahrenheit]
+          patterns: ["℃", "°\\s*[cCfF]\\b", "\\b\\d{1,3}\\s*°?\\s*[cCfF]\\b"]
+        time:
+          keywords: ["what time", "current time", clock, timezone, "what's the time", "whats the time"]
+          patterns: ["\\b(\\d{1,2}:\\d{2}|am|pm|o'?clock)\\b"]
+        calendar:
+          keywords: [calendar, schedule, meeting, appointment, agenda]
+        search:
+          keywords: [search, "look up", google, "find out", "who is", "what is", "latest news"]
+        generic:
+          keywords: []
+
+# ---------------------------------------------------------------------------
+# Named product profiles (overlays merged onto the top-level defaults above).
+# Use: --profile research|general|voice|autonomy
+# ---------------------------------------------------------------------------
+profiles:
+
+  # Research-assistant — steam + memory + web; coding off
+  # python demo.py --profile research --goal "..."
+  # hive chat --profile research --goal "..."
+  research:
+    assemble:
+      memory: true
+      steam: true
+      web: true
+      skills: true
+      coding: false
+      workers: true
+      playground: false
+      integrations: true
+      wiki: true
+      mcp: false
+    agent:
+      steps:
+        mode: dynamic
+        max: 16
+        wall_seconds: 420
+        dynamic:
+          code: { max_steps: 5, wall_seconds: 120 }
+          search: { max_steps: 10, wall_seconds: 240 }
+          explore: { max_steps: 10, wall_seconds: 240 }
+          general: { max_steps: 8, wall_seconds: 180 }
+          media: { max_steps: 8, wall_seconds: 180 }
+          download: { max_steps: 8, wall_seconds: 240 }
+      plan_first:
+        enabled: true
+        default_mode: auto
+        one_step_per_turn: true
+        one_step_per_run: false
+      shortlist_top_k: 12
+      use_selector: true
+      verbose: true
+      hci:
+        strict: true
+        penalties:
+          enabled: true
+        governor:
+          enabled: false
+          on_grade_d:
+            shrink_shortlist: true
+            max_shortlist: 8
+          on_grade_f:
+            shrink_shortlist: true
+            max_shortlist: 6
+          on_step_pressure:
+            prefer_plan_focus: true
+          on_thrash:
+            shrink_shortlist: true
+            max_shortlist: 6
+    model:
+      # Research: inherits top-level SSH Ollama endpoint
+      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+
+  # General-assistant — multi-turn shell, prefs, life packs, HITL optional
+  # hive chat --profile general --hitl
+  general:
+    assemble:
+      memory: true
+      steam: false
+      web: true
+      skills: true
+      coding: false
+      workers: true
+      playground: false
+      life: true
+      integrations: true
+      wiki: true
+      mcp: false
+    assistant:
+      hitl: false
+      life:
+        enabled: true
+      permissions:
+        domains:
+          calendar: { enabled: true }
+          email: { enabled: true }
+          notes: { enabled: true }
+          files:
+            enabled: true
+            roots: []
+      voice:
+        enabled: false
+    agent:
+      steps:
+        mode: dynamic
+        max: 12
+        wall_seconds: 300
+        dynamic:
+          code: { max_steps: 5, wall_seconds: 120 }
+          search: { max_steps: 6, wall_seconds: 120 }
+          explore: { max_steps: 8, wall_seconds: 180 }
+          general: { max_steps: 8, wall_seconds: 180 }
+          media: { max_steps: 8, wall_seconds: 180 }
+          download: { max_steps: 8, wall_seconds: 240 }
+      plan_first:
+        enabled: true
+        default_mode: auto
+        one_step_per_turn: true
+        one_step_per_run: false
+      shortlist_top_k: 12
+      use_selector: true
+      verbose: true
+      hci:
+        strict: true
+        penalties:
+          enabled: true
+        governor:
+          enabled: false
+    model:
+      # General: inherits top-level model.endpoint
+      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+
+  # Voice-assistant — VCE I/O; progressive ack; soft-SKIP without binaries
+  # hive voice --profile voice
+  voice:
+    assemble:
+      memory: true
+      steam: true
+      web: true
+      skills: true
+      coding: false
+      workers: true
+      playground: false
+      life: false
+      integrations: true
+      wiki: false
+      mcp: false
+    assistant:
+      hitl: false
+      life:
+        enabled: false
+      voice:
+        enabled: true
+        # Natural hybrid: speak a first line, then tools/results
+        progressive_ack: true
+        # Local small model: keep ack timeout tight; templates/AIML fill gaps
+        ack_timeout_ms: 1800
+        system_prompt: >
+          CRITICAL VOICE RULES: You are Amy, a friendly voice assistant on a call.
+          Do NOT call yourself a coding agent or software engineer unless the user asks about code.
+          Answer in short plain spoken sentences. No markdown, bullets, bold, code fences, or emoji.
+          For greetings or introductions: at most two short sentences, then optionally one fun fact if asked.
+          Prefer under forty words unless the user asks for detail.
+          TOOL HONESTY: Never say you are checking or scanning unless you already called a tool.
+          You have a terminal: use run_powershell (or run_shell) for local tasks — e.g. arp -a,
+          Get-NetNeighbor, ipconfig, ping. Do not invent a missing LAN tool; run the commands.
+          Put command results into text; put a short spoken summary into speak.
+        speak:
+          strip_markdown: true
+          max_chars: 420
+          max_sentences: 4
+        dual_response: true
+      permissions:
+        domains: {}
+    agent:
+      steps:
+        mode: dynamic
+        max: 8
+        wall_seconds: 180
+        dynamic:
+          code: { max_steps: 4, wall_seconds: 90 }
+          search: { max_steps: 6, wall_seconds: 120 }
+          general: { max_steps: 6, wall_seconds: 120 }
+      plan_first:
+        # Voice chat: skip plan-first so greetings stay short
+        enabled: false
+        default_mode: auto
+        one_step_per_turn: true
+        one_step_per_run: false
+      shortlist_top_k: 10
+      use_selector: true
+      verbose: true
+      hci:
+        strict: true
+        penalties:
+          enabled: true
+        governor:
+          enabled: false
+    model:
+      # Voice: inherits top-level SSH Ollama (Hermes-4-70B GGUF)
+      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+
+  # Autonomy / evolution — three pillars spine
+  # hive chat --profile autonomy
+  # python demo.py --profile autonomy
+  autonomy:
+    assemble:
+      memory: true
+      steam: true
+      web: true
+      skills: true
+      coding: true
+      workers: false
+      playground: false
+      life: true
+      integrations: true
+      wiki: true
+      mcp: false
+      autonomy: true
+      evolution: true
+    assistant:
+      hitl: false
+      life:
+        enabled: true
+      voice:
+        enabled: false
+    agent:
+      steps:
+        mode: dynamic
+        max: 16
+        wall_seconds: 420
+      plan_first:
+        enabled: true
+        default_mode: auto
+        one_step_per_turn: true
+        one_step_per_run: false
+      tool_plan:
+        enabled: true
+        max_steps: 8
+        catalog_desc_chars: 140
+      shortlist_top_k: 12
+      use_selector: true
+      verbose: true
+      hci:
+        strict: true
+        penalties:
+          enabled: true
+        governor:
+          enabled: false
+    model:
+      # Autonomy: inherits top-level model.endpoint
+      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+
+  # Ambient / Desktop Friday — wake + idle + life + voice + presence
+  # hive ambient --profile ambient
+  ambient:
+    assemble:
+      # OS / shell / Bambu / slicer / web — Amy still prunes to allowlist.
+      memory: false
+      steam: false
+      web: true
+      skills: false
+      coding: true
+      workers: false
+      playground: false
+      life: false
+      integrations: false
+      wiki: false
+      mcp: false
+      autonomy: false
+      evolution: false
+      presence: false
+    assistant:
+      # Headless voice — never prompt [y/N] for tools
+      hitl: false
+      life:
+        enabled: false
+      permissions:
+        domains: {}
+      voice:
+        enabled: true
+        progressive_ack: true
+        # Fast template/AIML ack path — do not wait 1.8s for LLM bridge
+        ack_timeout_ms: 400
+        dual_response: true
+        ambient:
+          enabled: true
+          wake_phrase: "hey chloe"
+          engine: auto
+          cooldown_ms: 1500
+          idle_interval_s: 5
+          allow_act: false
+        system_prompt: >
+          CRITICAL VOICE RULES: You are Amy, a friendly ambient assistant.
+          Wake word is Chloe (user says hey Chloe / Chloe).
+          Answer in short plain spoken sentences. No markdown or emoji.
+          Prefer under forty words unless the user asks for detail.
+          ACTION FIRST: when the user asks you to do something on this PC, CALL THE TOOL and do it.
+          Do not explain how they could do it. Do not web_search for local OS actions.
+          Never narrate instructions, goals, "conversational mode", or your reasoning aloud.
+          Never say "I see the goal", "the goal was", "fully present", or "the user said".
+          Never mention todo_list, plan_status, planning tools, direct-answer goals,
+          workspace paths, or that you are writing a natural-language answer.
+          For "got it" / "okay" / "thanks": reply with one short word only (Okay. / Got it.).
+          Just answer or act in 1–2 short sentences.
+          For greetings / goodnight / who are you: reply briefly with NO tools.
+          For "connect" / printer / Bambu: call bambu_status (or ask what to connect to in one short line).
+          YOUR ONLY TOOLS (call these by exact name — they ARE allowed):
+          - hive_delegate(agent='scout'|'ops'|'scribe'|'archivist', goal='...') for specialists
+          - os_brightness(level=0-100 or delta=-10) for dim/brighten
+          - os_volume / os_mute / os_toggle / os_open_app / browse_url
+          - play_youtube(query=song or artist) to open YouTube Music search
+          - os_power(action=shutdown|restart|cancel|sleep|lock, delay_seconds=60)
+          - os_process_list(name=...) then os_process_kill(name=... or pid=...) to stop apps/processes
+          - run_powershell / run_shell for other local PC tasks (list, kill, check, fix)
+          - web_search / web_fetch for live facts (weather, news) ONLY — not for local actions
+          - bambu_status / bambu_control
+          - slicer_find / slicer_open
+          - read_file / list_dir for local files in the workspace
+          - smartpanels_status / smartpanels_login / smartpanels_open / smartpanels_logout
+          - smartpanels_rooms / smartpanels_set_room(room=..., on=true|false)
+          Prefer hive_delegate: scout=research, ops=OS actions, scribe=drafts, archivist=workspace notes.
+          For "kill X" / "stop X" / "close X": call os_process_kill(name='X') immediately.
+          Optional: os_process_list first if the name is unclear — never web_search snakes or docs.
+          For Smart Panel / meeting room / director / workspace lights: call smartpanels_set_room
+          (e.g. room='Meeting Room', on=true). Do NOT web_search for this. Do NOT treat as calendar.
+          Never speak passwords, emails, or secrets aloud.
+          Never speak [PRESENT], agent=, or job= banners.
+          Never say a tool "isn't allowed" or "not found" without calling the exact name above.
+          Never invent adjust_brightness_contrast or other image tools — use os_brightness.
+          For shutdown/restart: use os_power with a delay; cancel with action=cancel.
+          HOME REGION: Hyderabad, Telangana, India (Asia/Kolkata).
+          For weather / local asks without a city, search THIS region — never invent Delhi.
+          Never say REFUSED or mention grounding codes.
+          OUTPUT: dual JSON {"text":"...","speak":"1-2 short sentences"} when possible.
+    agent:
+      steps:
+        mode: dynamic
+        max: 14
+        wall_seconds: 240
+        dynamic:
+          code: { max_steps: 10, wall_seconds: 180 }
+          search: { max_steps: 8, wall_seconds: 150 }
+          explore: { max_steps: 12, wall_seconds: 220 }
+          general: { max_steps: 12, wall_seconds: 200 }
+          media: { max_steps: 10, wall_seconds: 180 }
+      plan_first:
+        enabled: false
+        default_mode: auto
+        one_step_per_turn: true
+        one_step_per_run: false
+      shortlist_top_k: 10
+      use_selector: true
+      verbose: true
+      hci:
+        strict: false
+        penalties:
+          enabled: false
+        governor:
+          enabled: false
+    model:
+      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+      # Voice latency: skip CoT; spoken path still strips think tags if present
+      temperature: 0.08
+      top_p: 0.8
+      max_tokens: 2048
+      think: false
+
+  # Presence substrate — conscious-*feeling* build-kit profile
+  # hive presence show | hive chat --profile presence
+  presence:
+    assemble:
+      memory: true
+      steam: false
+      web: true
+      skills: true
+      coding: false
+      workers: false
+      playground: false
+      life: true
+      integrations: true
+      wiki: true
+      mcp: false
+      autonomy: true
+      evolution: false
+      presence: true
+    assistant:
+      hitl: false
+      life:
+        enabled: true
+      voice:
+        enabled: false
+        dual_response: true
+    agent:
+      steps:
+        mode: dynamic
+        max: 12
+        wall_seconds: 300
+      plan_first:
+        enabled: true
+        default_mode: auto
+        one_step_per_turn: true
+        one_step_per_run: false
+      shortlist_top_k: 10
+      use_selector: true
+      verbose: true
+      hci:
+        strict: true
+        penalties:
+          enabled: true
+        governor:
+          enabled: false
+    model:
+      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+
+# Amy product integrations (read by amy.tools on ambient start)
+amy:
+  apps:
+    enabled: [smartpanels]
+  # Locality for weather / "near me" — edit city if IP guess is wrong.
+  home:
+    city: Hyderabad
+    region: Telangana
+    country: India
+    timezone: Asia/Kolkata
+    # Spoken/search label (keep short)
+    label: "Hyderabad, Telangana, India"
+  bambu:
+    # LAN IP from printer screen / Bambu Studio device list
+    host: ""
+    serial: ""
+    access_code: ""
+    mqtt_port: 8883
+  slicer:
+    # Optional absolute path; otherwise auto-discovers Bambu Studio / Orca / Prusa
+    path: ""

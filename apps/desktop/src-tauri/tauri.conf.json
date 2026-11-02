@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Amy",
+  "version": "0.1.0",
+  "identifier": "com.amy.assistant",
+  "build": {
+    "frontendDist": "../ui",
+    "devUrl": "http://127.0.0.1:8787",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Amy",
+        "width": 380,
+        "height": 520,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    },
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png", "icons/icon.ico"]
+  }
+}

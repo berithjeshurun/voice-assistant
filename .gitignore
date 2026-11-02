@@ -1,0 +1,22 @@
+.env
+logs/*
+!logs/.gitkeep
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.venv/
+Thumbs.db
+node_modules/
+apps/web/node_modules/
+apps/desktop/node_modules/
+apps/orb/target/
+apps/desktop/src-tauri/target/
+apps/web/dist-ssr/
+# Amy local secrets / session state (never commit)
+.amy/
+**/.amy/
+**/secrets/*.env
+!**/secrets.example.env
+apps/packs/**/session.json
+apps/packs/**/storage_state.json

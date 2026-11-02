@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Amy desktop capability",
+  "windows": ["main", "chat", "dock"],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "shell:allow-open"
+  ]
+}

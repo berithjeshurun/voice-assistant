@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amy"
+version = "0.1.0"
+description = "Amy — always-on voice assistant host (PyHive brain, HUD + LAN server)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "websockets>=12",
+  "pydantic>=2",
+  "pynput>=1.7",
+  "pycaw>=20240210",
+  "comtypes>=1.4",
+]
+
+[project.optional-dependencies]
+dev = ["httpx"]
+apps = ["playwright>=1.40", "PyYAML>=6"]
+
+[project.scripts]
+amy = "amy.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["amy*"]
