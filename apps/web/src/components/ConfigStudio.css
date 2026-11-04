@@ -1,0 +1,183 @@
+.config-studio__rail {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  padding: 0.35rem 0 0.55rem;
+  margin-top: 0.35rem;
+  scrollbar-width: thin;
+}
+
+.config-sec {
+  appearance: none;
+  flex: 0 0 auto;
+  border: 1px solid rgba(138, 163, 181, 0.28);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.config-sec.is-active {
+  color: var(--ink);
+  border-color: rgba(61, 206, 167, 0.5);
+  background: rgba(61, 206, 167, 0.14);
+}
+
+.config-studio__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+.config-studio__head h2 {
+  margin: 0 0 0.25rem;
+}
+
+.config-studio__head code {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.config-studio__actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.config-studio__blurb {
+  margin: 0.75rem 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.config-studio__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.65rem 0 0.35rem;
+  flex-wrap: wrap;
+}
+
+.config-studio__search {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(77, 184, 232, 0.22);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+}
+
+.config-studio__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.7rem;
+  margin-top: 0.75rem;
+}
+
+.config-field {
+  padding: 0.85rem 0.9rem 1rem;
+  min-height: 6.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.config-field--wide {
+  grid-column: 1 / -1;
+  min-height: 8rem;
+}
+
+.config-field__path {
+  margin: 0.2rem 0 0;
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.config-field__textarea {
+  width: 100%;
+  min-height: 7rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(77, 184, 232, 0.22);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  padding: 0.55rem 0.65rem;
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.config-field__textarea--mono {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.config-field__top {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.config-field__top strong {
+  font-size: 0.95rem;
+}
+
+.config-field__input {
+  width: 100%;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(77, 184, 232, 0.22);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+}
+
+.config-field__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.config-opt {
+  appearance: none;
+  border: 1px solid rgba(138, 163, 181, 0.28);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.35rem 0.65rem;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.config-opt.is-active {
+  color: var(--ink);
+  border-color: rgba(61, 206, 167, 0.5);
+  background: rgba(61, 206, 167, 0.14);
+}
+
+.config-studio__apps {
+  margin-top: 0.85rem;
+  padding: 0.9rem 1rem 1.1rem;
+}
+
+.config-studio__apps h3 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+
+.config-studio__pack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+}

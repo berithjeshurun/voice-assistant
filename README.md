@@ -1,29 +1,31 @@
 # Amy
 
-Always-on personal assistant. **Not a chatbot. Not Jarvis.**
+Always-on personal assistant — voice-first host with a LAN HUD and companion orb.
 
 ```text
 G:\Amy\              product host (Python) + HUD apps
-H:\New_VLibs\v4\     Hive libraries (import / pip -e)
-G:\HiveSTEAM\        runtime (persona, wake, VCE)
+H:\New_VLibs\v4\     Hive libraries (import / pip -e)  [optional path]
+G:\HiveSTEAM\        runtime (persona, wake, VCE)       [optional path]
 ```
+
+Paths above are common on this machine; `scripts/_env.*` also accepts portable defaults via env / `.env`.
 
 ## Surfaces
 
 | Surface | How |
 |---------|-----|
-| Voice on host | Wake **hey amy** → listen → speak |
+| Voice on host | Wake **hey chloe** → listen → speak |
 | Phone / laptop | Open the printed LAN link in a browser |
-| Desktop HUD | Tauri app `apps/desktop` (title **Amy**) |
-| Orb | Persistent Crystalized Ball companion ([React Bits](https://www.reactbits.dev/animations/crystalized-ball)) |
+| Desktop launcher | Tauri app `apps/desktop` — tray opens HUD on demand |
+| Orb | Always-on-top Crystalized Ball (`/?view=orb`); captions overlay while speaking |
 
 ## Run
 
 ```powershell
 cd G:\Amy
 .\scripts\bootstrap.ps1   # once
-.\scripts\run.ps1         # host + local HUD server
-.\scripts\run.ps1 -Lan    # central hive server — phones on Wi‑Fi
+.\scripts\run.ps1         # host + orb (no captions window)
+.\scripts\run.ps1 -Lan    # LAN HUD for phones
 ```
 
 ```bash
@@ -34,14 +36,16 @@ cd G:\Amy
 
 Or: `python -m amy serve --lan`
 
-Say **hey amy** on the host mic. Hard stop: **Amy, stop.**
+Wake: **hey chloe**. Hard stop: **Chloe, stop.**
+
+Full HUD is on demand (launcher tray / double-click orb). Legacy captions window: `AMY_CHAT_WINDOW=1` or `--chat-window`.
 
 ## Layout
 
-- `amy/` — product host (AmbientHost, AmyServer, protocol)
-- `apps/web` — React HUD (served at `/`)
-- `apps/desktop` — Tauri shell
+- `amy/` — product host (AmbientHost, AmyServer, Hive specialists)
+- `apps/web` — React HUD (build with `npm run build` in `apps/web`)
+- `apps/desktop` — Tauri launcher
 - `apps/orb` — optional Bevy orb (`AMY_ORB=bevy`); default orb is Crystalized Ball in `apps/web`
-- `config/hive.yaml` — Hive profile (brain stays in libraries)
+- `config/hive.yaml` — profiles + model endpoint
 
 See `docs/ARCHITECTURE.md` and `PRO-PLAN.md`.

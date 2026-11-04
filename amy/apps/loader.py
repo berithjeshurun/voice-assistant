@@ -15,11 +15,29 @@ def amy_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def packs_root() -> Path:
+def packs_roots() -> List[Path]:
+    """Plug-and-play pack roots: Amy apps/packs + $PYHIVE_HOME/packs (+ override)."""
+    roots: List[Path] = []
     env = os.environ.get("AMY_PACKS_ROOT", "").strip()
     if env:
-        return Path(env)
-    return amy_root() / "apps" / "packs"
+        for part in env.split(os.pathsep):
+            p = Path(part.strip())
+            if p.is_dir() and p not in roots:
+                roots.append(p)
+    primary = amy_root() / "apps" / "packs"
+    if primary.is_dir() and primary not in roots:
+        roots.append(primary)
+    home = (os.environ.get("PYHIVE_HOME") or "").strip()
+    if home:
+        steam = Path(home) / "packs"
+        if steam.is_dir() and steam not in roots:
+            roots.append(steam)
+    return roots
+
+
+def packs_root() -> Path:
+    roots = packs_roots()
+    return roots[0] if roots else amy_root() / "apps" / "packs"
 
 
 def _read_yaml(path: Path) -> Dict[str, Any]:
@@ -34,28 +52,39 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
 
 
 def discover_packs() -> List[Dict[str, Any]]:
-    root = packs_root()
-    if not root.is_dir():
-        return []
     found: List[Dict[str, Any]] = []
-    for child in sorted(root.iterdir()):
-        if not child.is_dir():
+    seen: set[str] = set()
+    for root in packs_roots():
+        if not root.is_dir():
             continue
-        man = child / "manifest.yaml"
-        if not man.is_file():
-            continue
-        data = _read_yaml(man)
-        pack_id = str(data.get("id") or child.name).strip()
-        entry = {
-            "id": pack_id,
-            "name": str(data.get("name") or pack_id),
-            "path": child,
-            "manifest": data,
-            "skill": child / "SKILL.md",
-            "tools_module": child / "tools.py",
-        }
-        found.append(entry)
-        _MANIFEST_CACHE[pack_id] = entry
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
+                continue
+            man = child / "manifest.yaml"
+            if not man.is_file():
+                continue
+            data = _read_yaml(man)
+            pack_id = str(data.get("id") or child.name).strip()
+            if not pack_id or pack_id in seen:
+                continue
+            # Optional: pack may redirect to Amy source via amy_path
+            amy_path = str(data.get("amy_path") or "").strip()
+            path = Path(amy_path) if amy_path and Path(amy_path).is_dir() else child
+            tools = path / "tools.py"
+            if not tools.is_file():
+                tools = child / "tools.py"
+            entry = {
+                "id": pack_id,
+                "name": str(data.get("name") or pack_id),
+                "path": path if (path / "tools.py").is_file() else child,
+                "manifest": data,
+                "skill": (path / "SKILL.md") if (path / "SKILL.md").is_file() else child / "SKILL.md",
+                "tools_module": tools if tools.is_file() else child / "tools.py",
+                "steam_root": str(root),
+            }
+            found.append(entry)
+            _MANIFEST_CACHE[pack_id] = entry
+            seen.add(pack_id)
     return found
 
 

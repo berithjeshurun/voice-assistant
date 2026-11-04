@@ -1,0 +1,52 @@
+.rb-specular {
+  appearance: none;
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.7rem;
+  border: 1px solid rgba(77, 184, 232, 0.35);
+  background: linear-gradient(
+    145deg,
+    rgba(77, 184, 232, 0.22),
+    rgba(13, 28, 40, 0.85) 55%,
+    rgba(61, 206, 167, 0.12)
+  );
+  color: var(--ink, #e7f0f7);
+  font: inherit;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  isolation: isolate;
+}
+
+.rb-specular--ghost {
+  background: transparent;
+  border-color: rgba(138, 163, 181, 0.3);
+}
+
+.rb-specular:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.rb-specular__shine {
+  pointer-events: none;
+  position: absolute;
+  inset: -40%;
+  background: linear-gradient(
+    115deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.18) 50%,
+    transparent 60%
+  );
+  transform: translateX(-60%);
+  transition: transform 0.55s ease;
+  z-index: 0;
+}
+
+.rb-specular:hover .rb-specular__shine {
+  transform: translateX(60%);
+}
+
+.rb-specular__label {
+  position: relative;
+  z-index: 1;
+}

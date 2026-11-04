@@ -38,9 +38,14 @@ def screen_size() -> Tuple[int, int]:
 
 
 def orb_rect() -> Rect:
-    """Companion orb — left side."""
+    """Compact companion orb — previous footprint, room for a larger crystal."""
     _sw, sh = screen_size()
-    w, h = 360, 400
+    # Prior ship size was 360×400; nudge slightly so the orb can breathe.
+    w, h = 400, 440
+    env_w = os.environ.get("AMY_ORB_W", "").strip()
+    env_h = os.environ.get("AMY_ORB_H", "").strip()
+    if env_w.isdigit() and env_h.isdigit():
+        w, h = int(env_w), int(env_h)
     margin = 28
     y = max(48, (sh - h) // 5)
     return Rect(x=margin, y=y, w=w, h=h)
@@ -65,3 +70,17 @@ def dock_rect() -> Rect:
     h = 72
     w = max(640, sw - margin * 2)
     return Rect(x=margin, y=max(0, sh - h - margin), w=w, h=h)
+
+
+def hud_rect() -> Rect:
+    """Main Amy control-plane HUD (desktop webview app)."""
+    sw, sh = screen_size()
+    w = min(1080, max(860, int(sw * 0.55)))
+    h = min(820, max(640, int(sh * 0.75)))
+    env_w = os.environ.get("AMY_HUD_W", "").strip()
+    env_h = os.environ.get("AMY_HUD_H", "").strip()
+    if env_w.isdigit() and env_h.isdigit():
+        w, h = int(env_w), int(env_h)
+    x = max(40, (sw - w) // 2)
+    y = max(36, (sh - h) // 8)
+    return Rect(x=x, y=y, w=w, h=h)

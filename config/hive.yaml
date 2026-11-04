@@ -623,12 +623,14 @@ profiles:
           YOUR ONLY TOOLS (call these by exact name — they ARE allowed):
           - hive_delegate(agent='scout'|'ops'|'scribe'|'archivist', goal='...') for specialists
           - os_brightness(level=0-100 or delta=-10) for dim/brighten
-          - os_volume / os_mute / os_toggle / os_open_app / browse_url
+          - os_volume / os_mute / os_toggle / os_open_app / os_list_apps / browse_url
           - play_youtube(query=song or artist) to open YouTube Music search
           - os_power(action=shutdown|restart|cancel|sleep|lock, delay_seconds=60)
           - os_process_list(name=...) then os_process_kill(name=... or pid=...) to stop apps/processes
+          - reg_query / reg_list / reg_set / reg_delete / reg_search / reg_analyze_app for Windows registry
           - run_powershell / run_shell for other local PC tasks (list, kill, check, fix)
-          - web_search / web_fetch for live facts (weather, news) ONLY — not for local actions
+          - SURF THE WEB: web_search(query=...) then web_fetch(url=...) to read pages; browse_url(url=... or query=...) to open the browser for the user
+          - For "look up / search / what's on / go to / open this site / surf": call web_search and/or web_fetch and/or browse_url — never refuse internet tasks
           - bambu_status / bambu_control
           - slicer_find / slicer_open
           - read_file / list_dir for local files in the workspace
@@ -732,6 +734,11 @@ profiles:
 amy:
   apps:
     enabled: [smartpanels]
+  # Halo-inspired experimental flags — OFF by default (no stack change).
+  experimental:
+    canvas_cards: false
+    capability_menu: false
+    remote_phone_polish: false
   # Locality for weather / "near me" — edit city if IP guess is wrong.
   home:
     city: Hyderabad
@@ -740,6 +747,19 @@ amy:
     timezone: Asia/Kolkata
     # Spoken/search label (keep short)
     label: "Hyderabad, Telangana, India"
+  updates:
+    repo: berithjeshurun/voice-assistant
+    cooldown_s: 900
+    watch: []
+  local_apps:
+    - id: amy_hud
+      name: Amy HUD
+      base_url: http://127.0.0.1:8787
+      health_path: /
+    - id: smartpanels
+      name: SmartPanels
+      base_url: http://127.0.0.1:8765
+      health_path: /
   bambu:
     # LAN IP from printer screen / Bambu Studio device list
     host: ""

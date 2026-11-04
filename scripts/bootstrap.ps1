@@ -39,6 +39,9 @@ if (Test-Path (Join-Path $web "package.json")) {
   }
 }
 
+Write-Host "Registering Amy as HiveSTEAM plug-and-play pack ..."
+& "$PSScriptRoot\install_hivesteam_pack.ps1"
+
 Write-Host ""
 Write-Host "PYHIVE_HOME=$env:PYHIVE_HOME"
 Write-Host "HIVE_CONFIG=$env:HIVE_CONFIG"

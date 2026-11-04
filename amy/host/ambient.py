@@ -55,6 +55,9 @@ class AmbientHost:
         self._pending_wake_transcript = ""
         self._speak_pulse_stop = threading.Event()
         self._speak_pulse_thread: Optional[threading.Thread] = None
+        self._env: Any = None
+        self._home_label = ""
+        self._home_tz = ""
 
     @property
     def voice_ok(self) -> bool:
@@ -107,6 +110,11 @@ class AmbientHost:
                 AssistantState.thinking,
                 detail=f"stt:{model_name}",
             )
+            self.bus.note_activity(
+                "speech model",
+                kind="status",
+                detail=f"loading {model_name}",
+            )
             tag = preload_stt()
             self._log(f"stt ready {tag}")
         except Exception as e:
@@ -150,11 +158,13 @@ class AmbientHost:
         try:
             from amy.tools import setup_amy_tool_surface
             from amy.tools.bambu import apply_config as apply_bambu_cfg
+            from amy.tools.local_apps import apply_config as apply_local_apps_cfg
             from amy.tools.slicer import apply_config as apply_slicer_cfg
 
             hcfg_early = getattr(shell, "_hcfg", None)
             apply_bambu_cfg(hcfg_early)
             apply_slicer_cfg(hcfg_early)
+            apply_local_apps_cfg(hcfg_early if isinstance(hcfg_early, dict) else {})
             try:
                 import yaml
                 from pathlib import Path as _P
@@ -165,6 +175,17 @@ class AmbientHost:
                     amy_cfg = raw_yaml.get("amy") or {}
                     apply_bambu_cfg(amy_cfg)
                     apply_slicer_cfg(amy_cfg)
+                    apply_local_apps_cfg(amy_cfg)
+                    try:
+                        from amy.updates.checker import get_update_checker
+
+                        get_update_checker(
+                            amy_cfg.get("updates")
+                            if isinstance(amy_cfg.get("updates"), dict)
+                            else {}
+                        )
+                    except Exception:
+                        pass
                     home = amy_cfg.get("home") or {}
                     if isinstance(home, dict) and home:
                         label = str(
@@ -178,8 +199,10 @@ class AmbientHost:
                         tz = str(home.get("timezone") or "").strip()
                         if label:
                             os.environ["AMY_HOME_LABEL"] = label
+                            self._home_label = label
                             if tz:
                                 os.environ["AMY_HOME_TZ"] = tz
+                                self._home_tz = tz
                             city = str(home.get("city") or "").strip()
                             if city:
                                 os.environ["AMY_HOME_CITY"] = city
@@ -319,7 +342,8 @@ class AmbientHost:
             assert shell._ctx is not None
             shell._ctx.services["voice_ack_done"] = True
             shell._ctx.services["voice_ack_text"] = ack_text or ""
-            self.bus.set_state(AssistantState.thinking, detail="ack")
+            self.bus.set_state(AssistantState.thinking, detail="bridging reply")
+            self.bus.note_activity("ack", kind="status", detail="bridging reply")
             if (ack_text or "").strip():
                 self.bus.set_caption(ack_text.strip(), role="ack")
             if (_text or "").strip():
@@ -332,9 +356,16 @@ class AmbientHost:
             from amy.host.hud_cards import cards_from_turn
             from pyhive.core.host.dual_reply import DualReply, parse_dual_reply
 
-            self.bus.set_state(AssistantState.thinking, detail="agent")
+            self.bus.set_state(
+                AssistantState.thinking,
+                detail=(text or "working")[:80],
+            )
             self.bus.clear_cards()
-            self.bus.note_activity("working", kind="status", detail=(text or "")[:80])
+            self.bus.note_activity(
+                "working",
+                kind="status",
+                detail=(text or "")[:80] or "running tools",
+            )
 
             # Amy app voice shortcuts (SmartPanels login/open) — before agent.
             try:
@@ -436,7 +467,8 @@ class AmbientHost:
             if et_l in ("ack",) or "ack" == et_l:
                 if full:
                     self.bus.set_caption(full[:420], role="ack")
-                self.bus.set_state(AssistantState.thinking, detail="ack")
+                self.bus.set_state(AssistantState.thinking, detail="bridging reply")
+                self.bus.note_activity("ack", kind="status", detail="bridging reply")
                 return
             if et_l in ("reply",):
                 if full:
@@ -460,16 +492,17 @@ class AmbientHost:
                 self.bus.set_state(AssistantState.idle, detail=et_l, audio_level=0.0)
                 return
             mapping = {
-                "listening": AssistantState.listening,
-                "thinking": AssistantState.thinking,
-                "idle": AssistantState.idle,
+                "listening": (AssistantState.listening, "listening"),
+                "thinking": (AssistantState.thinking, "working"),
+                "idle": (AssistantState.idle, "ready"),
             }
-            for key, mapped in mapping.items():
+            for key, (mapped, det) in mapping.items():
                 if key in st_l or key in et_l:
                     if mapped != AssistantState.speaking:
                         self._stop_speak_pulse()
                     self.bus.set_state(
                         mapped,
+                        detail=det,
                         audio_level=0.0 if mapped != AssistantState.listening else 0.2,
                     )
                     break
@@ -510,6 +543,42 @@ class AmbientHost:
             require_persona_palm=False,
         )
         self._vs = vs
+
+        # Apply Amy settings (voice / persona) into runtime + TTS calls.
+        try:
+            from amy.settings.store import get_settings_store
+
+            store = get_settings_store()
+            store.apply_runtime()
+            block = store.persona_prompt_block()
+            if shell._agent is not None and block:
+                sp = getattr(shell._agent, "system_prompt", "") or ""
+                if "PERSONA PRESET (" not in sp:
+                    shell._agent.system_prompt = sp + block
+            snap = store.get()
+            voice_id = str(snap.get("voice_id") or "").strip()
+            style = str(snap.get("voice_style") or "natural").strip()
+            if voice_id or style:
+                _orig_tts = vs._tts
+
+                def _tts_with_settings(text: str, *, playback: str = "ffplay"):
+                    backend = vs._tts_backend()
+                    if backend in ("voicestudio", "voice_studio"):
+                        return _orig_tts(text, playback=playback)
+                    kw: dict = {"text": text, "playback": playback}
+                    if voice_id:
+                        kw["voice"] = voice_id
+                    if style:
+                        kw["style"] = style
+                    return vs._call_tool("vce_tts", **kw)
+
+                vs._tts = _tts_with_settings  # type: ignore[method-assign]
+            self._log(
+                f"settings voice={voice_id or '-'} style={style} "
+                f"persona={snap.get('persona_preset')}"
+            )
+        except Exception as e:
+            self._log(f"settings apply: {e}")
 
         # Early-speak: first streamed sentence → TTS while agent continues
         def _early_speak(sentence: str) -> None:
@@ -554,9 +623,107 @@ class AmbientHost:
             if self._voice_ok or self.force_voice:
                 self._log("warmup tts…")
                 vs.speak("Ready.", playback="none")
+                try:
+                    self.bus.clear_caption()
+                except Exception:
+                    pass
                 self._log("warmup tts ok")
         except Exception as e:
             self._log(f"warmup tts: {e}")
+
+        # Live environment awareness — foreground app + clock into prompt / orb.
+        try:
+            from amy.host.env_context import EnvAwareness, apply_to_system_prompt
+
+            def _on_env(snap) -> None:
+                try:
+                    if shell._agent is not None:
+                        sp = getattr(shell._agent, "system_prompt", "") or ""
+                        shell._agent.system_prompt = apply_to_system_prompt(sp, snap)
+                    if shell._ctx is not None:
+                        shell._ctx.services["amy_env"] = snap.as_dict()
+                    detail = snap.summary
+                    if snap.process_name or snap.window_title:
+                        detail = (
+                            f"{snap.process_name or 'app'}"
+                            + (f" — {snap.window_title}" if snap.window_title else "")
+                        )
+                        if len(detail) > 72:
+                            detail = detail[:69] + "…"
+                    self.bus.note_activity(
+                        "env",
+                        kind="env",
+                        detail=detail or snap.summary,
+                    )
+                except Exception:
+                    pass
+
+            self._env = EnvAwareness(
+                every_s=2.5,
+                on_update=_on_env,
+                home_label=self._home_label or os.environ.get("AMY_HOME_LABEL", ""),
+                tz=self._home_tz or os.environ.get("AMY_HOME_TZ", ""),
+            )
+            self._env.start()
+            self._env.refresh()
+            self._log("env awareness on")
+        except Exception as e:
+            self._log(f"env awareness: {e}")
+
+        # Alert bus → activity strip (rate-limited; no spam).
+        try:
+            from amy.workers.alerts import get_alert_bus
+
+            def _on_alert(alert) -> None:
+                try:
+                    self.bus.note_activity(
+                        alert.title[:48],
+                        kind="alert",
+                        detail=(alert.detail or alert.kind)[:80],
+                    )
+                except Exception:
+                    pass
+
+            bus = get_alert_bus()
+            bus.on_emit = _on_alert
+            self._log("alert bus on")
+        except Exception as e:
+            self._log(f"alert bus: {e}")
+
+        # Quiet metric watcher — only alerts on sustained pressure (no spam).
+        def _metric_watch() -> None:
+            from amy.system.metrics import sample_system
+            from amy.workers.alerts import get_alert_bus
+
+            while not self._idle_stop.is_set():
+                try:
+                    m = sample_system()
+                    ram = (m.get("ram") or {}).get("percent")
+                    disk = (m.get("disk") or {}).get("percent")
+                    ab = get_alert_bus()
+                    if isinstance(ram, (int, float)) and ram >= 92:
+                        ab.post(
+                            kind="metric",
+                            title=f"RAM high ({ram:.0f}%)",
+                            detail="Host memory pressure",
+                            severity=3,
+                            dedupe_key="metric:ram",
+                        )
+                    if isinstance(disk, (int, float)) and disk >= 92:
+                        ab.post(
+                            kind="metric",
+                            title=f"Disk high ({disk:.0f}%)",
+                            detail=(m.get("disk") or {}).get("path") or "",
+                            severity=3,
+                            dedupe_key="metric:disk",
+                        )
+                except Exception:
+                    pass
+                self._idle_stop.wait(60.0)
+
+        threading.Thread(
+            target=_metric_watch, name="amy-metric-watch", daemon=True
+        ).start()
 
         goals = GoalManager()
         auto = AutonomyEngine(
@@ -708,6 +875,11 @@ class AmbientHost:
 
             if first:
                 # Already have the ask from wake transcript — one turn, then live loop
+                try:
+                    if self._env is not None:
+                        self._env.refresh()
+                except Exception:
+                    pass
                 self.bus.set_state(AssistantState.thinking, detail=first[:80])
                 self.bus.set_caption(first[:420], role="user")
                 ans = vs.turn_from_text(first)
@@ -734,6 +906,9 @@ class AmbientHost:
                             "goodbye",
                             "stop",
                             "amy stop",
+                            "chloe stop",
+                            "chloe, stop",
+                            "chloe, stop.",
                         }:
                             break
                         self.bus.set_caption(text[:420], role="user")
@@ -754,6 +929,9 @@ class AmbientHost:
                         "goodbye",
                         "stop",
                         "amy stop",
+                        "chloe stop",
+                        "chloe, stop",
+                        "chloe, stop.",
                     }:
                         try:
                             vs.speak("Okay.", playback="ffplay")
@@ -860,6 +1038,11 @@ class AmbientHost:
             return ""
         if not self._started or self._vs is None:
             raise RuntimeError("AmbientHost not started")
+        try:
+            if self._env is not None:
+                self._env.refresh()
+        except Exception:
+            pass
         self.bus.set_state(AssistantState.thinking, detail="text")
         self.bus.set_caption(text[:420], role="user")
         self.bus.clear_cards()
@@ -895,6 +1078,11 @@ class AmbientHost:
 
     def stop(self) -> None:
         self._idle_stop.set()
+        try:
+            if self._env is not None:
+                self._env.stop()
+        except Exception:
+            pass
         self._stop_speak_pulse()
         try:
             if self._daemon is not None:

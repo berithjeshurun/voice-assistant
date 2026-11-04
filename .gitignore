@@ -13,6 +13,8 @@ apps/desktop/node_modules/
 apps/orb/target/
 apps/desktop/src-tauri/target/
 apps/web/dist-ssr/
+apps/web/dist/
+apps/web/tsconfig.tsbuildinfo
 # Amy local secrets / session state (never commit)
 .amy/
 **/.amy/

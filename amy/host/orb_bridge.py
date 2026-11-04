@@ -112,7 +112,7 @@ class OrbBridge:
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
                 env=env,
@@ -121,11 +121,28 @@ class OrbBridge:
             print(f"# amy orb spawn failed: {e}", flush=True)
             self._proc = None
             return False
+
+        def _forward_logs() -> None:
+            proc = self._proc
+            if proc is None or proc.stdout is None:
+                return
+            try:
+                for line in proc.stdout:
+                    msg = (line or "").rstrip()
+                    if msg:
+                        print(f"# amy orb: {msg}", flush=True)
+            except Exception:
+                pass
+
+        threading.Thread(
+            target=_forward_logs, name="amy-orb-logs", daemon=True
+        ).start()
         print(f"# amy orb started mode={self._mode}", flush=True)
         return True
 
     def _reaper(self) -> None:
         """Restart orb only when both the sidecar and Edge orb window are gone."""
+        crashes = 0
         while not self._stop.is_set():
             proc = self._proc
             if proc is None:
@@ -133,6 +150,7 @@ class OrbBridge:
                 continue
             code = proc.poll()
             if code is None:
+                crashes = 0
                 self._stop.wait(1.0)
                 continue
             if self._stop.is_set():
@@ -146,8 +164,17 @@ class OrbBridge:
                     continue
             except Exception:
                 pass
-            print("# amy orb exited — restarting in 1.5s", flush=True)
-            self._stop.wait(1.5)
+            crashes += 1
+            delay = min(8.0, 1.5 * crashes)
+            print(
+                f"# amy orb exited code={code} — restarting in {delay:.1f}s",
+                flush=True,
+            )
+            if crashes >= 8:
+                print("# amy orb: giving up after repeated crashes", flush=True)
+                self._proc = None
+                break
+            self._stop.wait(delay)
             if self._stop.is_set():
                 break
             self._spawn()

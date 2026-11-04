@@ -10,34 +10,46 @@ use tauri::{
 fn amy_info() -> serde_json::Value {
     serde_json::json!({
         "name": "Amy",
-        "role": "desktop-hud",
+        "role": "desktop-launcher",
         "default_url": "http://127.0.0.1:8787"
     })
 }
 
-fn chat_url_from_env() -> String {
-    if let Ok(u) = env::var("AMY_CHAT_URL") {
-        if !u.trim().is_empty() {
-            return u;
-        }
-    }
+fn host_base() -> (String, String, String) {
     let token = env::var("AMY_TOKEN").unwrap_or_default();
     let host = env::var("AMY_HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let port = env::var("AMY_PORT").unwrap_or_else(|_| "8787".into());
+    (host, port, token)
+}
+
+fn with_token(url: &str, token: &str) -> String {
     if token.is_empty() {
-        format!("http://{host}:{port}/?view=chat")
+        url.to_string()
+    } else if url.contains('?') {
+        format!("{url}&token={token}")
     } else {
-        format!("http://{host}:{port}/?view=chat&token={token}")
+        format!("{url}?token={token}")
     }
 }
 
-fn dock_url_from_env() -> String {
-    if let Ok(u) = env::var("AMY_DOCK_URL") {
+fn hud_url_from_env() -> String {
+    if let Ok(u) = env::var("AMY_HUD_URL") {
         if !u.trim().is_empty() {
             return u;
         }
     }
-    chat_url_from_env().replace("view=chat", "view=dock")
+    let (host, port, token) = host_base();
+    with_token(&format!("http://{host}:{port}/"), &token)
+}
+
+fn orb_url_from_env() -> String {
+    if let Ok(u) = env::var("AMY_ORB_URL") {
+        if !u.trim().is_empty() {
+            return u;
+        }
+    }
+    let (host, port, token) = host_base();
+    with_token(&format!("http://{host}:{port}/?view=orb"), &token)
 }
 
 fn env_f64(key: &str, default: f64) -> f64 {
@@ -47,64 +59,68 @@ fn env_f64(key: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
-fn open_or_focus_chat(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("chat") {
+fn open_or_focus_hud(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("hud") {
         let _ = w.show();
         let _ = w.set_focus();
         return;
     }
-    let url = chat_url_from_env();
+    let url = hud_url_from_env();
     let parsed = url
         .parse()
-        .unwrap_or_else(|_| "http://127.0.0.1:8787/?view=chat".parse().unwrap());
-    let x = env_f64("AMY_CHAT_X", 1400.0);
-    let y = env_f64("AMY_CHAT_Y", 36.0);
-    let w = env_f64("AMY_CHAT_W", 440.0);
-    let h = env_f64("AMY_CHAT_H", 760.0);
-    let builder = WebviewWindowBuilder::new(app, "chat", WebviewUrl::External(parsed))
-        .title("Amy Captions")
+        .unwrap_or_else(|_| "http://127.0.0.1:8787/".parse().unwrap());
+    let x = env_f64("AMY_HUD_X", 420.0);
+    let y = env_f64("AMY_HUD_Y", 80.0);
+    let w = env_f64("AMY_HUD_W", 720.0);
+    let h = env_f64("AMY_HUD_H", 820.0);
+    let builder = WebviewWindowBuilder::new(app, "hud", WebviewUrl::External(parsed))
+        .title("Amy")
         .inner_size(w, h)
         .position(x, y)
         .resizable(true);
     let _ = builder.build();
 }
 
-fn open_or_focus_dock(app: &tauri::AppHandle) {
-    if env::var("AMY_DOCK_URL").ok().filter(|s| !s.trim().is_empty()).is_none()
-        && env::var("AMY_DOCK").unwrap_or_else(|_| "1".into()) == "0"
-    {
-        return;
-    }
-    if let Some(w) = app.get_webview_window("dock") {
+fn open_or_focus_orb(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("orb") {
         let _ = w.show();
+        let _ = w.set_focus();
+        let _ = w.set_always_on_top(true);
         return;
     }
-    let url = dock_url_from_env();
+    let url = orb_url_from_env();
     let parsed = url
         .parse()
-        .unwrap_or_else(|_| "http://127.0.0.1:8787/?view=dock".parse().unwrap());
-    let x = env_f64("AMY_DOCK_X", 16.0);
-    let y = env_f64("AMY_DOCK_Y", 980.0);
-    let w = env_f64("AMY_DOCK_W", 1880.0);
-    let h = env_f64("AMY_DOCK_H", 72.0);
-    let builder = WebviewWindowBuilder::new(app, "dock", WebviewUrl::External(parsed))
-        .title("Amy Dock")
+        .unwrap_or_else(|_| "http://127.0.0.1:8787/?view=orb".parse().unwrap());
+    let x = env_f64("AMY_ORB_X", 28.0);
+    let y = env_f64("AMY_ORB_Y", 120.0);
+    let w = env_f64("AMY_ORB_W", 400.0);
+    let h = env_f64("AMY_ORB_H", 440.0);
+    let builder = WebviewWindowBuilder::new(app, "orb", WebviewUrl::External(parsed))
+        .title("Amy")
         .inner_size(w, h)
         .position(x, y)
         .resizable(false)
         .decorations(false)
-        .always_on_top(true);
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true);
     let _ = builder.build();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Optional CLI: amy-desktop --chat-url http://...
     let args: Vec<String> = env::args().collect();
     for i in 0..args.len() {
-        if args[i] == "--chat-url" {
+        if args[i] == "--hud-url" {
             if let Some(u) = args.get(i + 1) {
-                env::set_var("AMY_CHAT_URL", u);
+                env::set_var("AMY_HUD_URL", u);
+            }
+        }
+        if args[i] == "--chat-url" {
+            // Back-compat: treat as full HUD URL
+            if let Some(u) = args.get(i + 1) {
+                env::set_var("AMY_HUD_URL", u);
             }
         }
     }
@@ -113,10 +129,11 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![amy_info])
         .setup(|app| {
-            let show = MenuItem::with_id(app, "show", "Show Amy", true, None::<&str>)?;
-            let chat = MenuItem::with_id(app, "chat", "Captions chat", true, None::<&str>)?;
+            let show = MenuItem::with_id(app, "show", "Show launcher", true, None::<&str>)?;
+            let hud = MenuItem::with_id(app, "hud", "Open Amy HUD", true, None::<&str>)?;
+            let orb = MenuItem::with_id(app, "orb", "Open orb", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &chat, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &hud, &orb, &quit])?;
 
             let _tray = TrayIconBuilder::new()
                 .menu(&menu)
@@ -129,10 +146,8 @@ pub fn run() {
                             let _ = w.set_focus();
                         }
                     }
-                    "chat" => {
-                        open_or_focus_chat(app);
-                        open_or_focus_dock(app);
-                    }
+                    "hud" => open_or_focus_hud(app),
+                    "orb" => open_or_focus_orb(app),
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
@@ -142,20 +157,18 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        open_or_focus_chat(tray.app_handle());
-                        open_or_focus_dock(tray.app_handle());
+                        // Left-click opens full HUD on demand (not a captions pane).
+                        open_or_focus_hud(tray.app_handle());
                     }
                 })
                 .build(app)?;
 
-            // Captions (right) + dock (bottom) on launch
-            open_or_focus_chat(app.handle());
-            open_or_focus_dock(app.handle());
+            // Production: do not auto-spawn captions/dock. Orb is owned by the Python host.
             Ok(())
         })
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main" || window.label() == "dock" {
+                if window.label() == "main" || window.label() == "orb" {
                     let _ = window.hide();
                     api.prevent_close();
                 }

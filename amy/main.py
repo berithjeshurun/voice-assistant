@@ -52,14 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
             "--chat-window",
             dest="chat_window",
             action="store_true",
-            default=True,
-            help="Open captions chat window (default on)",
+            default=False,
+            help="Open legacy captions chat window (off by default; HUD is on-demand)",
         )
         sp.add_argument(
             "--no-chat-window",
             dest="chat_window",
             action="store_false",
-            help="Disable captions chat window",
+            help="Disable captions chat window (default)",
         )
 
     run = sub.add_parser("run", help="Always-on ambient voice host")
@@ -227,10 +227,13 @@ def _run_with_server(host, args: argparse.Namespace) -> int:
     chat: ChatBridge | None = None
     token = args.token or secrets.token_urlsafe(16)
     os.environ["AMY_TOKEN"] = token
-    # Prefer Edge/Chromium for companion windows (faster than pywebview).
-    os.environ.setdefault("AMY_ORB_MODE", "chromium")
+    # Frameless pywebview orb — never Edge/Chrome title-bar chrome by default.
+    if (os.environ.get("AMY_ORB_MODE") or "").strip().lower() in ("", "auto", "chromium", "browser"):
+        os.environ["AMY_ORB_MODE"] = "webview"
     bind = args.bind
     port = int(args.port)
+    os.environ["AMY_PORT"] = str(port)
+    os.environ.setdefault("AMY_HOST", "127.0.0.1")
     # Orb always talks to loopback HUD even when server binds 0.0.0.0
     orb_host = "127.0.0.1"
     server_error: list[BaseException] = []
@@ -267,8 +270,15 @@ def _run_with_server(host, args: argparse.Namespace) -> int:
     else:
         print(f"# amy HUD ready http://{orb_host}:{port}/", flush=True)
         want_orb = bool(getattr(args, "orb", True))
-        # Captions (+ bottom dock) always ride with the orb.
-        want_chat = bool(getattr(args, "chat_window", True)) or want_orb
+        # Production: orb-only companion. Full HUD opens on demand from launcher.
+        # Opt in with --chat-window or AMY_CHAT_WINDOW=1.
+        env_chat = os.environ.get("AMY_CHAT_WINDOW", "").strip().lower()
+        if env_chat in ("1", "true", "yes", "on"):
+            want_chat = True
+        elif env_chat in ("0", "false", "no", "off"):
+            want_chat = False
+        else:
+            want_chat = bool(getattr(args, "chat_window", False))
 
         if want_orb:
             orb = OrbBridge(

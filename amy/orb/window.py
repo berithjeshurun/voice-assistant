@@ -1,7 +1,8 @@
 """Persistent always-on-top Amy orb — React Bits Crystalized Ball.
 
-Loads the web HUD at ``/?view=orb`` (CrystalizedBall). Prefers pywebview,
-then Edge/Chrome ``--app`` mode, then a minimal Tk placeholder.
+Loads the web HUD at ``/?view=orb`` (CrystalizedBall). Prefers frameless
+pywebview (headerless rounded panel); Chromium ``--app`` only when
+``AMY_ORB_MODE=chromium``.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +43,21 @@ def _orb_url(host: str, port: int, token: str, hud_url: str = "") -> str:
             "",
         )
     )
+
+
+def _spawn_hud_from_orb_url(url: str) -> None:
+    try:
+        from amy.host.hud_window import open_hud_subprocess
+
+        parsed = urllib.parse.urlparse(url)
+        q = dict(urllib.parse.parse_qsl(parsed.query))
+        open_hud_subprocess(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or DEFAULT_SERVER_PORT,
+            token=q.get("token") or os.environ.get("AMY_TOKEN", ""),
+        )
+    except Exception as e:
+        print(f"# amy orb open_hud failed: {e}", flush=True)
 
 
 def _wait_for_hud(url: str, timeout: float = 45.0) -> bool:
@@ -95,15 +110,16 @@ def _find_chromium() -> Optional[list[str]]:
 def _run_pywebview(url: str) -> bool:
     try:
         import webview  # type: ignore
-    except Exception:
+    except Exception as e:
+        print(f"# amy orb webview import failed: {e}", flush=True)
         return False
     from amy.host.placement import orb_rect
 
     r = orb_rect()
-    print(json.dumps({"type": "renderer_ready", "name": ASSISTANT_NAME, "mode": "webview"}), flush=True)
-    window = webview.create_window(
-        ASSISTANT_NAME,
-        url,
+    # Opaque dark + frameless — DWM rounds corners (no transparent white bleed).
+    kwargs = dict(
+        title=ASSISTANT_NAME,
+        url=url,
         width=r.w,
         height=r.h,
         x=r.x,
@@ -111,18 +127,49 @@ def _run_pywebview(url: str) -> bool:
         on_top=True,
         frameless=True,
         easy_drag=True,
-        background_color="#050a10",
+        resizable=False,
+        transparent=False,
+        background_color="#071018",
+        shadow=False,
+    )
+    try:
+        try:
+            window = webview.create_window(**kwargs)
+        except TypeError:
+            kwargs.pop("shadow", None)
+            window = webview.create_window(**kwargs)
+        except ValueError:
+            kwargs["background_color"] = "#000000"
+            window = webview.create_window(**kwargs)
+    except Exception as e:
+        print(f"# amy orb webview create failed: {e}", flush=True)
+        return False
+
+    print(
+        json.dumps({"type": "renderer_ready", "name": ASSISTANT_NAME, "mode": "webview"}),
+        flush=True,
     )
 
-    def _bind_click() -> None:
+    def _on_shown() -> None:
         try:
-            window.events.double_click += lambda: webbrowser.open(
-                url.replace("view=orb", "view=").replace("&&", "&").rstrip("?&")
-            )
+            from amy.host.win_chrome import style_amy_window
+
+            style_amy_window(ASSISTANT_NAME)
+        except Exception:
+            pass
+        try:
+            window.events.double_click += lambda: _spawn_hud_from_orb_url(url)
         except Exception:
             pass
 
-    webview.start(_bind_click)
+    try:
+        try:
+            webview.start(_on_shown, gui="edgechromium")
+        except Exception:
+            webview.start(_on_shown)
+    except Exception as e:
+        print(f"# amy orb webview start failed: {e}", flush=True)
+        return False
     return True
 
 
@@ -142,6 +189,7 @@ def _run_app_browser(url: str) -> bool:
         rect=r,
         title_class="AmyOrb",
         replace_existing=True,
+        always_on_top=True,
     )
     if proc is None and not profile_alive("orb"):
         return False
@@ -164,8 +212,7 @@ def _run_app_browser(url: str) -> bool:
             except Exception:
                 continue
             if msg.get("type") == "open_hud":
-                hud = url.replace("view=orb", "").replace("?&", "?").rstrip("?&")
-                webbrowser.open(hud)
+                _spawn_hud_from_orb_url(url)
 
     threading.Thread(target=_stdin, name="amy-orb-stdin", daemon=True).start()
     try:
@@ -214,7 +261,7 @@ def _run_tk_fallback(url: str, token: str) -> None:
     t0 = time.time()
 
     def open_hud(_e=None) -> None:
-        webbrowser.open(url.replace("view=orb", "").replace("?&", "?").rstrip("?&") or url)
+        _spawn_hud_from_orb_url(url)
 
     def on_click(e: tk.Event) -> None:
         drag["x"], drag["y"] = e.x, e.y
@@ -280,17 +327,24 @@ def run_orb(
     if not _wait_for_hud(url, timeout=20.0):
         print("# amy orb: HUD not ready yet — opening anyway", flush=True)
 
-    mode = (os.environ.get("AMY_ORB_MODE") or "auto").strip().lower()
-    # Chromium/Edge first on auto — pywebview is slower to paint on Windows.
-    if mode in ("auto", "browser", "chromium") and _run_app_browser(url):
-        return 0
+    mode = (os.environ.get("AMY_ORB_MODE") or "webview").strip().lower()
+    # Default: frameless pywebview (headerless, rounded CSS panel). Chromium
+    # --app keeps a title bar unless heavily hacked — only use when forced.
     if mode in ("auto", "webview") and _run_pywebview(url):
         return 0
+    if mode in ("browser", "chromium") and _run_app_browser(url):
+        return 0
+    # Opt-in only: AMY_ORB_MODE=tk (not a production ship path).
     if mode == "tk":
         _run_tk_fallback(url, token)
         return 0
-    _run_tk_fallback(url, token)
-    return 0
+    if mode == "auto" and _run_app_browser(url):
+        return 0
+    print(
+        "# amy orb: pip install pywebview (preferred) or set AMY_ORB_MODE=chromium",
+        flush=True,
+    )
+    return 1
 
 
 def main(argv: Optional[list[str]] = None) -> int:

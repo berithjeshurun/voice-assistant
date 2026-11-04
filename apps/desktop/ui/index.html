@@ -56,31 +56,37 @@
         font-size: 0.85rem;
         color: #4db8e8;
       }
+      .hint {
+        margin-top: 1.25rem;
+        font-size: 0.85rem;
+        color: #6a8496;
+      }
     </style>
   </head>
   <body>
     <main>
       <h1>Amy</h1>
       <p>
-        Desktop shell. Start the host with <code>.\scripts\run.ps1</code>, then open
-        captions chat or the orb.
+        Launcher. Start the host with <code>scripts/run.ps1</code> or
+        <code>scripts/run.sh</code>, then open the HUD when you need it.
+        The orb stays always-on-top from the host.
       </p>
       <div class="links">
-        <a id="chat" href="http://127.0.0.1:8787/?view=chat">Captions chat</a>
+        <a id="hud" href="http://127.0.0.1:8787/">Open Amy HUD</a>
         <a id="orb" class="secondary" href="http://127.0.0.1:8787/?view=orb">Orb</a>
       </div>
+      <p class="hint">Tray: Open Amy HUD · Open orb · Quit</p>
     </main>
     <script>
       const params = new URLSearchParams(location.search);
       const token = params.get("token") || localStorage.getItem("amy_token") || "";
-      const q = token ? "&token=" + encodeURIComponent(token) : "";
       if (token) localStorage.setItem("amy_token", token);
-      document.getElementById("chat").href = "http://127.0.0.1:8787/?view=chat" + (token ? "&token=" + encodeURIComponent(token) : "");
-      document.getElementById("orb").href = "http://127.0.0.1:8787/?view=orb" + (token ? "&token=" + encodeURIComponent(token) : "");
-      // Auto-jump to captions when launched with a token / AMY_CHAT_URL flow
-      if (params.get("autochat") === "1" || params.get("view") === "chat") {
-        location.replace(document.getElementById("chat").href);
-      }
+      const q = token ? "?token=" + encodeURIComponent(token) : "";
+      const qOrb = token
+        ? "?view=orb&token=" + encodeURIComponent(token)
+        : "?view=orb";
+      document.getElementById("hud").href = "http://127.0.0.1:8787/" + q;
+      document.getElementById("orb").href = "http://127.0.0.1:8787/" + qOrb;
     </script>
   </body>
 </html>

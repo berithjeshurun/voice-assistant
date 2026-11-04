@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import secrets
 import socket
 from pathlib import Path
@@ -133,8 +134,162 @@ def create_app(
         if cmd.type == "set_state" and cmd.state is not None:
             host.set_ui_state(cmd.state, detail="hud")
         elif cmd.type == "open_hud":
-            bus.set_state(bus.snapshot().state, detail="open_hud")
+            try:
+                from amy.host.hud_window import open_hud_subprocess
+
+                open_hud_subprocess(
+                    host="127.0.0.1",
+                    port=int(os.environ.get("AMY_PORT") or DEFAULT_SERVER_PORT),
+                    token=token,
+                )
+            except Exception as e:
+                bus.set_state(bus.snapshot().state, detail=f"open_hud:{e}")
+            else:
+                bus.set_state(bus.snapshot().state, detail="open_hud")
         return bus.snapshot()
+
+    @app.post("/api/open_hud")
+    def open_hud(_: None = Depends(_check_token)) -> dict:
+        """Open the Amy HUD as a desktop webview app (not a browser tab)."""
+        from amy.host.hud_window import open_hud_subprocess
+
+        ok = open_hud_subprocess(
+            host="127.0.0.1",
+            port=int(os.environ.get("AMY_PORT") or DEFAULT_SERVER_PORT),
+            token=token,
+        )
+        return {"ok": bool(ok)}
+
+    @app.get("/api/system")
+    def system_metrics(_: None = Depends(_check_token)) -> dict:
+        from amy.system.metrics import sample_system
+
+        return sample_system()
+
+    @app.get("/api/tools/catalog")
+    def tools_catalog_api(
+        category: str = "",
+        _: None = Depends(_check_token),
+    ) -> dict:
+        from amy.tools.catalog import get_tool_catalog
+
+        return get_tool_catalog().catalog(category)
+
+    @app.get("/api/updates")
+    def updates_api(
+        check: bool = False,
+        _: None = Depends(_check_token),
+    ) -> dict:
+        from amy.updates.checker import get_update_checker
+
+        chk = get_update_checker()
+        if check:
+            return chk.check(force=False)
+        return chk.status()
+
+    @app.get("/api/vision/status")
+    def vision_status_api(_: None = Depends(_check_token)) -> dict:
+        from amy.vision.service import get_vision_service
+
+        return get_vision_service().status()
+
+    @app.post("/api/vision/enroll")
+    def vision_enroll_api(body: dict, _: None = Depends(_check_token)) -> dict:
+        from amy.vision.service import get_vision_service
+
+        return get_vision_service().enroll(
+            str((body or {}).get("name") or ""),
+            image_path=str((body or {}).get("image_path") or ""),
+            from_camera=bool((body or {}).get("from_camera")),
+        )
+
+    @app.get("/api/alerts")
+    def alerts_api(
+        limit: int = 20,
+        _: None = Depends(_check_token),
+    ) -> dict:
+        from amy.workers.alerts import get_alert_bus
+
+        return {"ok": True, "alerts": get_alert_bus().list(limit=limit)}
+
+    @app.get("/api/settings")
+    def settings_get(_: None = Depends(_check_token)) -> dict:
+        from amy.settings.store import get_settings_store
+
+        return {"ok": True, **get_settings_store().options()}
+
+    @app.post("/api/settings")
+    def settings_set(body: dict, _: None = Depends(_check_token)) -> dict:
+        from amy.settings.store import get_settings_store
+
+        snap = get_settings_store().update(body or {})
+        # Push persona block into live agent when host is up.
+        try:
+            shell = getattr(host, "shell", None)
+            agent = getattr(shell, "_agent", None) if shell else None
+            if agent is not None:
+                from amy.settings.store import get_settings_store as _gs
+
+                block = _gs().persona_prompt_block()
+                sp = getattr(agent, "system_prompt", "") or ""
+                marker = "\n\nPERSONA PRESET ("
+                if marker in sp:
+                    sp = sp.split(marker)[0]
+                agent.system_prompt = sp + block
+        except Exception:
+            pass
+        return {"ok": True, "settings": snap}
+
+    @app.get("/api/integrations")
+    def integrations_list(_: None = Depends(_check_token)) -> dict:
+        from amy.settings.integrations import list_integrations
+
+        return list_integrations()
+
+    @app.post("/api/integrations/{integration_id}")
+    def integrations_set(
+        integration_id: str,
+        body: dict,
+        _: None = Depends(_check_token),
+    ) -> dict:
+        from amy.settings.integrations import set_integration_secrets
+
+        values = (body or {}).get("secrets") or body or {}
+        if not isinstance(values, dict):
+            return {"ok": False, "error": "secrets object required"}
+        return set_integration_secrets(integration_id, values)
+
+    @app.get("/api/packs")
+    def packs_list(_: None = Depends(_check_token)) -> dict:
+        from amy.apps.loader import discover_packs, enabled_pack_ids, packs_roots
+
+        packs = [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "steam_root": p.get("steam_root"),
+                "path": str(p.get("path")),
+            }
+            for p in discover_packs()
+        ]
+        return {
+            "ok": True,
+            "roots": [str(r) for r in packs_roots()],
+            "enabled": enabled_pack_ids(),
+            "packs": packs,
+        }
+
+    @app.get("/api/config")
+    def config_studio_get(_: None = Depends(_check_token)) -> dict:
+        from amy.config_studio import get_config_studio
+
+        return get_config_studio()
+
+    @app.post("/api/config")
+    def config_studio_set(body: dict, _: None = Depends(_check_token)) -> dict:
+        from amy.config_studio import update_config_studio
+
+        return update_config_studio(body or {})
 
     @app.websocket("/ws")
     async def ws_endpoint(

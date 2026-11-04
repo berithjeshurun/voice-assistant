@@ -7,6 +7,7 @@ WMI via Invoke-CimMethod / Get-WmiObject with a clear fallback.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import webbrowser
@@ -279,12 +280,8 @@ if ({next_val} -eq 0) {{ "dark_mode=on" }} else {{ "dark_mode=off" }}
     )
 
 
-def os_open_app(name: str = "", path: str = "") -> Dict[str, Any]:
-    """Open an app by friendly name (chrome, notepad, explorer, …) or full path."""
-    target = (path or "").strip() or (name or "").strip()
-    if not target:
-        return _err("Pass name or path")
-
+def _resolve_app_windows(target: str) -> Dict[str, Any]:
+    """Resolve an app via aliases, App Paths registry, Start Menu, Get-StartApps."""
     aliases = {
         "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
@@ -299,25 +296,153 @@ def os_open_app(name: str = "", path: str = "") -> Dict[str, Any]:
         "display": "ms-settings:display",
         "sound": "ms-settings:sound",
     }
-    key = target.lower()
-    resolved = aliases.get(key, target)
-    if not resolved:
-        return _err(f"No path mapped for {target!r}")
+    key = target.lower().strip()
+    if key in aliases:
+        return _ok(resolved=aliases[key], method="alias")
+    if target.lower().startswith("ms-") or "://" in target:
+        return _ok(resolved=target, method="uri")
+    if os.path.isfile(target):
+        return _ok(resolved=target, method="path")
 
-    if key in ("settings", "display", "sound") or str(resolved).startswith("ms-"):
-        webbrowser.open(resolved if str(resolved).startswith("ms-") else "ms-settings:")
-        return _ok(opened=resolved or "ms-settings:")
+    # App Paths registry (HKCU then HKLM)
+    try:
+        import winreg  # type: ignore
+
+        exe = key if key.endswith(".exe") else f"{key}.exe"
+        for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                with winreg.OpenKey(
+                    hive,
+                    rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe}",
+                ) as k:
+                    val, _ = winreg.QueryValueEx(k, "")
+                    if val and os.path.isfile(str(val)):
+                        return _ok(resolved=str(val), method="app_paths")
+            except OSError:
+                continue
+    except Exception:
+        pass
+
+    # Get-StartApps (AppX + classic)
+    out = _ps(
+        f"$q='{key.replace(chr(39), '')}'; "
+        "Get-StartApps | Where-Object { $_.Name -like \"*$q*\" -or $_.AppID -like \"*$q*\" } "
+        "| Select-Object -First 5 Name, AppID | ConvertTo-Json -Compress",
+        timeout=15.0,
+    )
+    if out.get("ok") and out.get("output"):
+        try:
+            import json
+
+            data = json.loads(out["output"])
+            if isinstance(data, dict):
+                data = [data]
+            if isinstance(data, list) and data:
+                app_id = str(data[0].get("AppID") or "")
+                name = str(data[0].get("Name") or "")
+                if app_id:
+                    return _ok(
+                        resolved=app_id,
+                        display_name=name,
+                        method="start_apps",
+                        matches=data[:5],
+                    )
+        except Exception:
+            pass
+
+    # where.exe / PATH
+    exe_guess = key if key.endswith(".exe") else f"{key}.exe"
+    which = shutil.which(target) or shutil.which(exe_guess)
+    if which:
+        return _ok(resolved=which, method="path_env")
+
+    return _err(f"Could not resolve app {target!r}")
+
+
+def os_list_apps(query: str = "", limit: int = 40) -> Dict[str, Any]:
+    """List installed / Start Menu apps (Windows Get-StartApps + App Paths sample)."""
+    lim = max(1, min(120, int(limit or 40)))
+    q = (query or "").strip().lower()
+    if sys.platform != "win32":
+        # Best-effort: PATH executables are not a full catalog on Unix
+        return _ok(platform=sys.platform, apps=[], note="Full catalog is Windows-first")
+
+    out = _ps(
+        "Get-StartApps | Select-Object Name, AppID | ConvertTo-Json -Compress",
+        timeout=20.0,
+    )
+    apps: List[Dict[str, Any]] = []
+    if out.get("ok") and out.get("output"):
+        try:
+            import json
+
+            data = json.loads(out["output"])
+            if isinstance(data, dict):
+                data = [data]
+            for row in data or []:
+                if not isinstance(row, dict):
+                    continue
+                name = str(row.get("Name") or "")
+                app_id = str(row.get("AppID") or "")
+                if q and q not in name.lower() and q not in app_id.lower():
+                    continue
+                apps.append({"name": name, "id": app_id, "source": "start_apps"})
+                if len(apps) >= lim:
+                    break
+        except Exception as e:
+            return _err(str(e))
+    return _ok(count=len(apps), query=q or None, apps=apps)
+
+
+def os_open_app(name: str = "", path: str = "") -> Dict[str, Any]:
+    """Open any app by name, Start Menu title, AppID, URI, or full path (cross-platform)."""
+    target = (path or "").strip() or (name or "").strip()
+    if not target:
+        return _err("Pass name or path")
+
+    key = target.lower()
+    if key in ("settings", "display", "sound") or target.startswith("ms-"):
+        uri = {
+            "settings": "ms-settings:",
+            "display": "ms-settings:display",
+            "sound": "ms-settings:sound",
+        }.get(key, target)
+        webbrowser.open(uri)
+        return _ok(opened=uri, method="uri")
 
     if sys.platform == "win32":
-        # Prefer Start-Process so PATH apps (notepad, wt) resolve
+        resolved = _resolve_app_windows(target)
+        if not resolved.get("ok"):
+            return resolved
+        exe = str(resolved.get("resolved") or "")
+        method = str(resolved.get("method") or "")
         try:
+            # AppX / shell AppIDs: shell:AppsFolder\... or PackageFamily!App
+            if method == "start_apps" or ("!" in exe and not os.path.isfile(exe)):
+                proc = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-Command",
+                        f"try {{ Start-Process $('{exe.replace(chr(39), '')}') }} "
+                        f"catch {{ Start-Process explorer.exe -ArgumentList 'shell:AppsFolder\\{exe.replace(chr(39), '')}' }}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                )
+                if proc.returncode == 0:
+                    return _ok(opened=exe, method=method, display_name=resolved.get("display_name"))
+            esc = exe.replace("'", "''")
             proc = subprocess.run(
                 [
                     "powershell",
                     "-NoProfile",
                     "-NonInteractive",
                     "-Command",
-                    f"Start-Process -FilePath '{resolved.replace(chr(39), chr(39)+chr(39))}'",
+                    f"Start-Process -FilePath '{esc}'",
                 ],
                 capture_output=True,
                 text=True,
@@ -325,18 +450,31 @@ def os_open_app(name: str = "", path: str = "") -> Dict[str, Any]:
                 check=False,
             )
             if proc.returncode == 0:
-                return _ok(opened=resolved)
-            os.startfile(resolved)  # type: ignore[attr-defined]
-            return _ok(opened=resolved)
+                return _ok(opened=exe, method=method)
+            os.startfile(exe)  # type: ignore[attr-defined]
+            return _ok(opened=exe, method=method)
         except Exception as e:
             try:
-                os.startfile(resolved)  # type: ignore[attr-defined]
-                return _ok(opened=resolved)
+                os.startfile(exe)  # type: ignore[attr-defined]
+                return _ok(opened=exe, method=method)
             except Exception as e2:
                 return _err(f"{e}; {e2}")
+
+    # macOS / Linux
+    if sys.platform == "darwin":
+        try:
+            subprocess.Popen(["open", "-a", target] if not os.path.isfile(target) else ["open", target])
+            return _ok(opened=target, method="open")
+        except Exception as e:
+            return _err(str(e))
+    # Linux: desktop files / PATH
+    which = shutil.which(target)
     try:
-        subprocess.Popen([resolved])
-        return _ok(opened=resolved)
+        if which:
+            subprocess.Popen([which])
+            return _ok(opened=which, method="path")
+        subprocess.Popen(["xdg-open", target])
+        return _ok(opened=target, method="xdg-open")
     except Exception as e:
         return _err(str(e))
 
@@ -549,6 +687,24 @@ def os_power(
     )
 
 
+def os_active_window() -> Dict[str, Any]:
+    """Return the focused desktop window title + process (environment glance)."""
+    try:
+        from amy.host.env_context import sample_env
+
+        snap = sample_env()
+        return _ok(
+            process=snap.process_name,
+            title=snap.window_title,
+            local_time=snap.local_time,
+            weekday=snap.weekday,
+            home=snap.home_label,
+            summary=snap.summary,
+        )
+    except Exception as e:
+        return _err(str(e))
+
+
 def register(registry: Any) -> List[str]:
     specs = [
         (os_volume, "Set or nudge Windows volume (level 0-100 or delta). Uses Core Audio."),
@@ -561,7 +717,14 @@ def register(registry: Any) -> List[str]:
             os_toggle,
             "Toggle wifi / bluetooth / dark_mode / night_light / airplane.",
         ),
-        (os_open_app, "Open an app by name (chrome, notepad, …) or path."),
+        (
+            os_open_app,
+            "Open any app by Start Menu name, AppID, alias, URI, or full path.",
+        ),
+        (
+            os_list_apps,
+            "List/search installed Start Menu apps (query=, limit=). Use before os_open_app.",
+        ),
         (browse_url, "Open a URL or web search query in the default browser."),
         (
             play_youtube,
@@ -578,6 +741,10 @@ def register(registry: Any) -> List[str]:
         (
             os_process_kill,
             "Kill a process NOW by name= (e.g. boa) or pid=. Do not web_search — call this.",
+        ),
+        (
+            os_active_window,
+            "Glance at the focused window (title + process + local time). Use for 'what's on screen' / 'this'.",
         ),
     ]
     out: List[str] = []

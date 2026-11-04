@@ -1,11 +1,11 @@
 # PRO-PLAN.md — Project AMY
 
-> **A**utonomous **M**ulti-agent **Y**ielding assistant — a JARVIS/FRIDAY-class personal AI.
+> **A**utonomous **M**ulti-agent **Y**ielding assistant — voice-first personal AI.
 
-**Status:** Product host + LAN HUD. Phase 2 voice path shipped (measure/warmup/early-speak). LLM: **SSH Ollama** `hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M` (`model.endpoint.mode: ssh` → `192.168.68.69`). Current focus: **Phase 3 — The Hive**.
+**Status:** Production companion path — orb-only always-on-top, HUD on demand, LLM-first acks. LLM: **SSH Ollama** `hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M` (`mode: ssh` → `192.168.68.69`). Current focus: **Phase 3 — The Hive** + dogfood.
 **Owner:** berithjeshurun
 **Workspace:** `G:\Amy` · Libraries: `H:\New_VLibs\v4` · Runtime: `G:\HiveSTEAM`
-**How to run:** `.\scripts\run.ps1` → `python -m amy serve` (`HIVE_CONFIG=G:\Amy\config\hive.yaml`). LAN: `-Lan` / `--lan`. Not `amy chat`. Section 4 Adopt = pip-editable from H:, never vendor. Brand: **Amy** (not Jarvis). Wake: **hey chloe**.
+**How to run:** `.\scripts\run.ps1` → `python -m amy serve` (`HIVE_CONFIG=G:\Amy\config\hive.yaml`). LAN: `-Lan` / `--lan`. Not `amy chat`. Section 4 Adopt = pip-editable from H:, never vendor. Brand: **Amy**. Wake: **hey chloe**.
 
 ---
 
@@ -14,7 +14,7 @@
 ### 1.1 Vision
 Amy is an always-available, voice-first, proactive assistant that knows you, controls your digital (and eventually physical) environment, and gets real work done by delegating to a swarm of specialized agents — the "hive."
 
-### 1.2 What "JARVIS/FRIDAY level" means (concrete, testable)
+### 1.2 Production bar (concrete, testable)
 | Capability | Definition of done |
 |---|---|
 | Natural voice conversation | < 1.2 s end-to-end latency to first spoken word; interruptible (barge-in) |
@@ -119,7 +119,7 @@ G:\Amy\
 │   ├── web\                  # React HUD (phones + desktop)
 │   ├── desktop\              # Tauri shell titled Amy
 │   └── orb\                  # Bevy companion (presentation-only)
-├── config\hive.yaml          # HIVE_CONFIG; profile ambient; wake hey amy
+├── config\hive.yaml          # HIVE_CONFIG; profile ambient; wake hey chloe
 ├── identity\AMY.md
 ├── prompts\ambient.md
 ├── docs\
@@ -189,7 +189,7 @@ Rules: every memory has `source`, `confidence`, `created_at`, `last_used`. User 
 
 | Repo | Language | Purpose | Smoke\* | Reusable parts | Overlaps with Amy component | Decision |
 |---|---|---|---|---|---|---|
-| `hive-v4` | Python | Umbrella ambient Desktop Friday + companions | pass (import) | `pyhive` OS, profiles, ambient/voice/idle/UI, config | Queen runtime, Audio I/O, Tools, Observability | **Adopt** (canonical lib root) |
+| `hive-v4` | Python | Umbrella ambient host + companions | pass (import) | `pyhive` OS, profiles, ambient/voice/idle/UI, config | Queen runtime, Audio I/O, Tools, Observability | **Adopt** (canonical lib root) |
 | `hivepersona` | Python | User biometrics + clearance | pass (import) | enroll/verify face/voice, dual clearance | Safety & policy, Audio I/O gates | **Adopt** |
 | `hivescreen` | Python | Desktop capture + OCR | pass (import) | screen_shot/ocr/describe | Context engine, Eyes | **Adopt** |
 | `hivesteam` | Python | Tools + VCE / forge adapters | pass (import) | tool arsenal, VCE STT/TTS | Tool layer, Audio I/O | **Adopt** |
@@ -320,7 +320,7 @@ Chat-as-exit harness (`amy chat`, chatbot scaffolds, STATUS theater) was wiped. 
 Deferred as product entry. Tools still available under ambient when needed. No chat REPL product.
 
 ### Phase 2 — Voice (HANDOFF → dogfood on local `deepseek-r1:8b`)
-- [x] Product entry: `scripts\run.ps1` → `python -m amy serve` (`hey amy` wake; assistant name Amy)
+- [x] Product entry: `scripts\run.ps1` → `python -m amy serve` (`hey chloe` wake; assistant name Amy)
 - [x] Amy Python host imports PyHive AmbientHost APIs
 - [x] LAN AmyServer + React HUD for phones/laptops
 - [x] Tauri desktop shell + Bevy orb scaffolds

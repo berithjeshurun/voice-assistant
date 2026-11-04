@@ -1,25 +1,19 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import AmyOrb from "./components/AmyOrb";
-import CaptionBar from "./components/CaptionBar";
 import ChatView from "./components/ChatView";
+import Dashboard from "./components/Dashboard";
 import DockView from "./components/DockView";
 import {
+  ActivityChip,
   api,
   AssistantState,
   ChatMessage,
   getToken,
+  HiveTask,
   HudCard,
   openAmySocket,
   Snapshot,
 } from "./api";
-
-const STATES: AssistantState[] = [
-  "idle",
-  "listening",
-  "thinking",
-  "speaking",
-  "needs_approval",
-];
 
 function viewParam(): string {
   try {
@@ -27,6 +21,43 @@ function viewParam(): string {
   } catch {
     return "";
   }
+}
+
+/** Live status under the orb — never leave the user staring at a blank “thinking”. */
+function humanOrbStatus(
+  state: AssistantState,
+  detail: string,
+  activity: { kind?: string; label?: string; detail?: string }[],
+): string {
+  const d = (detail || "").trim();
+  const low = d.toLowerCase();
+  if (low.startsWith("stt:")) return `loading speech (${d.slice(4)})…`;
+  if (low === "ack" || low.includes("bridging") || low.includes("ack")) {
+    return "bridging reply…";
+  }
+  if (low === "agent" || low === "working" || low === "text") return "working on it…";
+  if (low === "tts" || low === "tts_pulse" || low === "tts_tail" || low === "early") {
+    return "speaking…";
+  }
+  if (low === "convo" || low === "transcript" || low === "barge") return "listening…";
+  if (low === "ready" || low === "idle" || low === "convo_end" || low === "spoken") {
+    if (state === "idle") return "ready — say hey chloe";
+  }
+  const chip = activity.find(
+    (a) => a.kind === "tool" || a.kind === "hive" || a.kind === "status",
+  );
+  if (chip?.label) {
+    const extra = (chip.detail || "").trim();
+    return extra ? `${chip.label}: ${extra.slice(0, 48)}` : chip.label;
+  }
+  if (d && !["thinking", "idle", "listening", "speaking"].includes(low)) {
+    return d.slice(0, 72);
+  }
+  if (state === "thinking") return "working…";
+  if (state === "listening") return "listening…";
+  if (state === "speaking") return "speaking…";
+  if (state === "idle") return "ready — say hey chloe";
+  return "";
 }
 
 function isOrbOnlyView(): boolean {
@@ -48,7 +79,10 @@ export default function App() {
   const [audioLevel, setAudioLevel] = useState(0);
   const [caption, setCaption] = useState("");
   const [captionRole, setCaptionRole] = useState("");
+  const [detail, setDetail] = useState("");
+  const [activity, setActivity] = useState<ActivityChip[]>([]);
   const [cards, setCards] = useState<HudCard[]>([]);
+  const [tasks, setTasks] = useState<HiveTask[]>([]);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,20 +91,23 @@ export default function App() {
   const [orbOnly] = useState(isOrbOnlyView);
   const [chatOnly] = useState(isChatView);
   const [dockOnly] = useState(isDockView);
-  const bottomRef = useRef<HTMLDivElement>(null);
 
   const applySnap = (s: Snapshot) => {
     setState(s.state);
     setAudioLevel(typeof s.audio_level === "number" ? s.audio_level : 0);
     if (typeof s.caption === "string") setCaption(s.caption);
     if (typeof s.caption_role === "string") setCaptionRole(s.caption_role);
+    if (typeof s.detail === "string") setDetail(s.detail);
+    if (Array.isArray(s.activity)) setActivity(s.activity);
     if (Array.isArray(s.cards)) setCards(s.cards);
+    if (Array.isArray(s.tasks)) setTasks(s.tasks);
   };
 
   useEffect(() => {
     if (!token) return;
     let ws: WebSocket | null = null;
     let cancelled = false;
+    let poll: ReturnType<typeof setInterval> | undefined;
     (async () => {
       try {
         const h = await api.health();
@@ -82,20 +119,38 @@ export default function App() {
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
+      try {
+        const snap = await api.snapshot();
+        if (!cancelled) applySnap(snap);
+      } catch {
+        /* ignore — WS / next poll will fill */
+      }
     })();
     ws = openAmySocket((snap) => {
       applySnap(snap);
     });
+    // Orb status must stay live even if the socket stalls on “thinking”.
+    if (orbOnly) {
+      poll = setInterval(() => {
+        api.snapshot().then(applySnap).catch(() => undefined);
+      }, 900);
+    }
     return () => {
       cancelled = true;
       ws?.close();
+      if (poll) clearInterval(poll);
     };
-  }, [token]);
+  }, [token, orbOnly]);
 
   useEffect(() => {
-    if (orbOnly) return;
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [history, busy, orbOnly]);
+    if (!orbOnly) return;
+    document.documentElement.classList.add("orb-page");
+    document.body.classList.add("orb-page");
+    return () => {
+      document.documentElement.classList.remove("orb-page");
+      document.body.classList.remove("orb-page");
+    };
+  }, [orbOnly]);
 
   const saveToken = () => {
     const t = tokenInput.trim();
@@ -107,9 +162,8 @@ export default function App() {
     setToken(t);
   };
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    const msg = text.trim();
+  const sendMessage = async (raw: string) => {
+    const msg = raw.trim();
     if (!msg || busy) return;
     setBusy(true);
     setError("");
@@ -134,18 +188,23 @@ export default function App() {
     }
   };
 
-  const openFullHud = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("view");
-    window.open(url.toString(), "_blank", "noopener,noreferrer");
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    await sendMessage(text);
   };
 
-  const title = useMemo(() => "Amy", []);
+  const openFullHud = () => {
+    // Native pywebview HUD — never open a browser tab from the orb.
+    void api.openHud().catch((e) => {
+      console.error("open_hud failed", e);
+      setError(e instanceof Error ? e.message : String(e));
+    });
+  };
 
   if (!token) {
     return (
       <div className="token-gate">
-        <h1>{title}</h1>
+        <h1>Amy</h1>
         <p>Enter the access token from the host machine link.</p>
         <input
           value={tokenInput}
@@ -169,105 +228,65 @@ export default function App() {
   }
 
   if (orbOnly) {
+    const showCaption =
+      Boolean(caption.trim()) &&
+      caption.trim().toLowerCase() !== "ready." &&
+      (state === "speaking" ||
+        state === "listening" ||
+        state === "thinking" ||
+        captionRole === "ack" ||
+        captionRole === "speak");
+    const statusLine = humanOrbStatus(state, detail, activity);
+    const envChip = activity.find((a) => a.kind === "env");
+    const envLine = (envChip?.detail || envChip?.label || "").trim();
     return (
-      <div className="orb-stage" onDoubleClick={openFullHud} title="Double-click to open HUD">
+      <div
+        className="orb-stage"
+        data-state={state}
+        onDoubleClick={openFullHud}
+      >
         <AmyOrb state={state} audioLevel={audioLevel} interactive />
-        {/* Captions live in the separate chat window (?view=chat) */}
-        <span className="orb-stage__label">{state.replace("_", " ")}</span>
+        {showCaption ? (
+          <div
+            className={`orb-caption orb-caption--${captionRole || "speak"}`}
+            aria-live="polite"
+          >
+            {caption.trim().slice(0, 220)}
+          </div>
+        ) : null}
+        <div className="orb-stage__status" aria-live="polite">
+          <span className="orb-stage__label">{state.replace("_", " ")}</span>
+          {statusLine ? (
+            <span className="orb-stage__detail">{statusLine}</span>
+          ) : null}
+          {envLine && state === "idle" ? (
+            <span className="orb-stage__env">{envLine}</span>
+          ) : null}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="app">
-      <header className="brand">
-        <div>
-          <h1>{title}</h1>
-          <p>Always-on assistant — voice on the host, HUD everywhere.</p>
-        </div>
-        <div className="status" data-state={state}>
-          <span className="dot" />
-          {state.replace("_", " ")}
-        </div>
-      </header>
-
-      <div className="orb-hero" aria-hidden={false}>
-        <AmyOrb state={state} audioLevel={audioLevel} compact interactive />
-      </div>
-
-      <CaptionBar caption={caption} role={captionRole} cards={cards} />
-
-      <div className="meta">
-        <span>voice {meta.voice ? "on" : "off"}</span>
-        <span>wake {meta.wake ? "on" : "off"}</span>
-        <span>{meta.lan ? "LAN" : "local"}</span>
-      </div>
-
-      <div className="chat" aria-live="polite">
-        {history.length === 0 && (
-          <div className="bubble assistant">
-            <span className="who">Amy</span>
-            Say hey amy on the host mic, or type here from your phone.
-          </div>
-        )}
-        {history.map((m, i) => (
-          <div key={`${m.ts}-${i}`} className={`bubble ${m.role === "user" ? "user" : "assistant"}`}>
-            <span className="who">{m.role === "user" ? "You" : "Amy"}</span>
-            {m.text}
-          </div>
-        ))}
-        {busy && (
-          <div className="bubble assistant">
-            <span className="who">Amy</span>
-            Thinking…
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
-
-      {error && <p className="err">{error}</p>}
-
-      <form className="composer" onSubmit={onSubmit}>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Message Amy…"
-          rows={2}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void onSubmit(e as unknown as FormEvent);
-            }
-          }}
-        />
-        <div className="actions">
-          <button type="submit" disabled={busy || !text.trim()}>
-            Send
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => void api.wake().catch((e) => setError(String(e)))}
-          >
-            Wake
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => void api.barge().catch((e) => setError(String(e)))}
-          >
-            Stop
-          </button>
-        </div>
-      </form>
-
-      <div className="demo-row" aria-label="Orb preview states">
-        {STATES.map((s) => (
-          <button key={s} type="button" onClick={() => void api.setState(s)}>
-            {s}
-          </button>
-        ))}
-      </div>
-    </div>
+    <Dashboard
+      state={state}
+      audioLevel={audioLevel}
+      caption={caption}
+      captionRole={captionRole}
+      detail={detail}
+      activity={activity}
+      cards={cards}
+      tasks={tasks}
+      history={history}
+      meta={meta}
+      busy={busy}
+      error={error}
+      text={text}
+      setText={setText}
+      onSubmit={onSubmit}
+      onSendMessage={(msg) => void sendMessage(msg)}
+      onWake={() => void api.wake().catch((e) => setError(String(e)))}
+      onBarge={() => void api.barge().catch((e) => setError(String(e)))}
+    />
   );
 }

@@ -37,17 +37,27 @@ _OPS = AgentSpec(
         "os_brightness",
         "os_toggle",
         "os_open_app",
+        "os_list_apps",
         "browse_url",
         "play_youtube",
         "os_power",
         "os_process_list",
         "os_process_kill",
+        "reg_query",
+        "reg_list",
+        "reg_set",
+        "reg_delete",
+        "reg_search",
+        "reg_analyze_app",
     ),
-    tags=("os", "desktop"),
+    tags=("os", "desktop", "registry"),
     system_prompt=(
         "You are Ops, Amy's desktop operator. "
-        "When asked to change volume, brightness, open apps, browse, or power, "
+        "When asked to change volume, brightness, open apps, browse, power, or registry, "
         "CALL the matching tool immediately. Do not explain how the user could do it. "
+        "To open an unknown app: os_list_apps then os_open_app. "
+        "For install paths / App Paths / Uninstall keys: reg_analyze_app or reg_query. "
+        "Prefer HKCU writes; HKLM may need admin. "
         "Reply with one short confirmation sentence after the tool runs. "
         "Never invent tool names — only use the tools you were given."
     ),

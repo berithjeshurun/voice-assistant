@@ -1,4 +1,4 @@
-"""Product branding — Amy only (no Jarvis / Friday product names)."""
+"""Product branding — Amy."""
 
 ASSISTANT_NAME = "Amy"
 DEFAULT_WAKE_PHRASE = "hey chloe"

@@ -12,6 +12,14 @@
     />
   </head>
   <body>
+    <script>
+      try {
+        if (/[?&]view=orb(?:&|$)/i.test(location.search)) {
+          document.documentElement.classList.add("orb-page");
+          document.body.classList.add("orb-page");
+        }
+      } catch (e) {}
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

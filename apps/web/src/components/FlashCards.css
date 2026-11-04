@@ -1,0 +1,99 @@
+.flash__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.flash__rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(180px, 220px);
+  gap: 0.55rem;
+  overflow-x: auto;
+  padding-bottom: 0.35rem;
+  scrollbar-width: thin;
+}
+
+.flash__tile {
+  appearance: none;
+  text-align: left;
+  border: 1px solid rgba(138, 163, 181, 0.22);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  border-radius: 0.85rem;
+  padding: 0.7rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  cursor: pointer;
+  font: inherit;
+  min-height: 7.5rem;
+}
+
+.flash__tile.is-active {
+  border-color: rgba(77, 184, 232, 0.55);
+  background: rgba(77, 184, 232, 0.1);
+}
+
+.flash__tile strong {
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.flash__tile p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.flash__kind {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #7ec8e8;
+}
+
+.flash__focus {
+  margin-top: 0.85rem;
+  border: 1px solid rgba(77, 184, 232, 0.2);
+  border-radius: 0.9rem;
+  padding: 0.85rem 0.9rem;
+  background: rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.flash__focus-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.flash__focus h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.flash__focus p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 0.9rem;
+}
+
+.flash__url {
+  font-size: 0.72rem !important;
+  word-break: break-all;
+  opacity: 0.85;
+}
+
+.flash__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+  align-items: center;
+}

@@ -88,9 +88,180 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export type SystemMetrics = {
+  ok: boolean;
+  ts?: number;
+  cpu_percent?: number | null;
+  ram?: {
+    total_gb: number;
+    used_gb: number;
+    percent: number;
+    available_gb: number;
+  } | null;
+  disk?: {
+    path: string;
+    total_gb: number;
+    used_gb: number;
+    percent: number;
+    free_gb: number;
+  } | null;
+  net?: {
+    bytes_sent: number;
+    bytes_recv: number;
+    up_mbps: number;
+    down_mbps: number;
+  } | null;
+  error?: string | null;
+};
+
+export type UpdatesStatus = {
+  ok: boolean;
+  local_version?: string;
+  checked_at?: number;
+  channels?: {
+    repo?: string;
+    tag?: string;
+    name?: string;
+    channel?: string;
+    url?: string;
+    newer?: boolean;
+  }[];
+  error?: string | null;
+  repo?: string;
+};
+
+export type VisionStatus = {
+  ok: boolean;
+  people_count?: number;
+  people?: string[];
+  last?: { event?: string; name?: string | null; ts?: number } | null;
+  store?: string;
+};
+
+export type AlertItem = {
+  id: string;
+  kind: string;
+  title: string;
+  detail?: string;
+  severity?: number;
+  ts?: number;
+  acknowledged?: boolean;
+};
+
+export type AmySettings = {
+  voice_id?: string;
+  voice_style?: string;
+  persona_preset?: string;
+  clearance_role?: string;
+  clearance_label?: string;
+  integrations_enabled?: string[];
+};
+
+export type SettingsOptions = {
+  ok?: boolean;
+  voice_presets?: { name: string; quality?: string; sample_rate?: number }[];
+  voice_styles?: string[];
+  persona_presets?: { id: string; label: string; blurb?: string; prompt?: string }[];
+  clearance_roles?: string[];
+  clearance_labels?: string[];
+  integrations?: IntegrationInfo[];
+  settings?: AmySettings;
+  path?: string;
+};
+
+export type IntegrationInfo = {
+  id: string;
+  name: string;
+  kind?: string;
+  docs?: string;
+  pack?: string;
+  keys?: string[];
+  configured?: Record<string, boolean>;
+  ready?: boolean;
+  secrets_file?: string;
+};
+
+export type ConfigField = {
+  id: string;
+  section: string;
+  label: string;
+  type:
+    | "toggle"
+    | "text"
+    | "password"
+    | "select"
+    | "number"
+    | "longtext"
+    | "list"
+    | "json"
+    | string;
+  path: string;
+  blurb?: string;
+  options?: (string | number)[];
+  value?: unknown;
+};
+
+export type ConfigStudioPayload = {
+  ok: boolean;
+  mode?: string;
+  path?: string;
+  sections?: { id: string; label: string; blurb?: string }[];
+  fields?: ConfigField[];
+  field_count?: number;
+  apps_enabled?: string[];
+  local_apps?: { id: string; name?: string; base_url: string; health_path?: string }[];
+  packs_available?: string[];
+};
+
 export const api = {
   health: () => req<Health>("/api/health"),
   snapshot: () => req<Snapshot>("/api/snapshot"),
+  system: () => req<SystemMetrics>("/api/system"),
+  toolsCatalog: (category = "") =>
+    req<Record<string, unknown>>(
+      `/api/tools/catalog${category ? `?category=${encodeURIComponent(category)}` : ""}`,
+    ),
+  updates: (check = false) =>
+    req<UpdatesStatus>(`/api/updates${check ? "?check=true" : ""}`),
+  visionStatus: () => req<VisionStatus>("/api/vision/status"),
+  visionEnroll: (name: string, from_camera = false) =>
+    req("/api/vision/enroll", {
+      method: "POST",
+      body: JSON.stringify({ name, from_camera }),
+    }),
+  alerts: (limit = 20) =>
+    req<{ ok: boolean; alerts: AlertItem[] }>(`/api/alerts?limit=${limit}`),
+  openHud: () => req<{ ok: boolean }>("/api/open_hud", { method: "POST" }),
+  settings: () => req<SettingsOptions>("/api/settings"),
+  setSettings: (body: Partial<AmySettings>) =>
+    req<{ ok: boolean; settings: AmySettings }>("/api/settings", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  integrations: () =>
+    req<{ ok: boolean; integrations: IntegrationInfo[] }>("/api/integrations"),
+  setIntegration: (id: string, secrets: Record<string, string>) =>
+    req<{ ok: boolean }>(`/api/integrations/${encodeURIComponent(id)}`, {
+      method: "POST",
+      body: JSON.stringify({ secrets }),
+    }),
+  packs: () =>
+    req<{
+      ok: boolean;
+      packs: { id: string; name: string; path?: string; steam_root?: string }[];
+      roots: string[];
+      enabled?: string[];
+    }>("/api/packs"),
+  configStudio: () => req<ConfigStudioPayload>("/api/config"),
+  saveConfigStudio: (body: {
+    values?: Record<string, unknown>;
+    apps_enabled?: string[];
+    local_apps?: { id: string; name?: string; base_url: string; health_path?: string }[];
+  }) =>
+    req<ConfigStudioPayload>("/api/config", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   cancelHiveTask: (task_id: string) =>
     req<{ ok: boolean; error?: string; task?: HiveTask }>("/api/hive/cancel", {
       method: "POST",

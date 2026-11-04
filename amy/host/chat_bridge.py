@@ -34,9 +34,10 @@ class ChatBridge:
         self.token = token
         self.host = host
         self.port = int(port)
+        # Production default: no separate captions window (orb + on-demand HUD).
         self.enabled = enabled and (
-            os.environ.get("AMY_CHAT_WINDOW", "1").strip().lower()
-            not in ("0", "false", "off", "no")
+            os.environ.get("AMY_CHAT_WINDOW", "0").strip().lower()
+            in ("1", "true", "on", "yes")
         )
         # Separate bottom Edge window was noisy — activity lives inside captions HUD.
         # Set AMY_DOCK=1 to restore the standalone strip.

@@ -1,0 +1,32 @@
+.rb-spotlight {
+  position: relative;
+  border-radius: 1rem;
+  border: 1px solid rgba(77, 184, 232, 0.16);
+  background: rgba(7, 16, 24, 0.72);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.rb-spotlight::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    420px circle at var(--spot-x, 50%) var(--spot-y, 40%),
+    var(--spot-color, rgba(77, 184, 232, 0.22)),
+    transparent 55%
+  );
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  z-index: 0;
+}
+
+.rb-spotlight:hover::before {
+  opacity: 1;
+}
+
+.rb-spotlight > * {
+  position: relative;
+  z-index: 1;
+}
