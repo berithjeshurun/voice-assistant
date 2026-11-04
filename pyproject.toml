@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["httpx"]
+dev = ["httpx", "pytest>=8", "PyYAML>=6"]
 apps = ["playwright>=1.40", "PyYAML>=6"]
 
 [project.scripts]

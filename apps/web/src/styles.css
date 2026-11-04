@@ -1322,3 +1322,113 @@ button:disabled {
   padding: 0.4rem 0.55rem;
   font: inherit;
 }
+
+/* Safety guard — approvals + lockdown */
+.guard-overlay {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(380px, calc(100vw - 2rem));
+  z-index: 50;
+}
+
+.guard-overlay .guard {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  background: rgba(7, 16, 24, 0.92);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.guard {
+  margin: 0.4rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  z-index: 1;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.guard__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.guard[data-lockdown="1"] .guard__mode {
+  color: var(--err);
+  font-weight: 700;
+}
+
+.guard button {
+  font-family: inherit;
+  font-size: 0.64rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.28rem 0.6rem;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.guard button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.guard__lock {
+  border-color: rgba(224, 107, 107, 0.5) !important;
+  color: var(--err) !important;
+}
+
+.guard__ask {
+  border: 1px solid rgba(232, 162, 74, 0.55);
+  background: rgba(232, 162, 74, 0.08);
+  border-radius: 6px;
+  padding: 0.55rem 0.7rem;
+}
+
+.guard__ask[data-risk="high"] {
+  border-color: rgba(224, 107, 107, 0.7);
+  background: rgba(224, 107, 107, 0.08);
+}
+
+.guard__ask header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  color: var(--warn);
+}
+
+.guard__summary {
+  margin: 0.35rem 0 0.15rem;
+  font-size: 0.82rem;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.guard__reason {
+  margin: 0 0 0.45rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.guard__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.guard .guard__approve {
+  background: var(--accent);
+  color: #1a1208;
+  border-color: var(--accent);
+  font-weight: 700;
+}

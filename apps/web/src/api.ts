@@ -34,6 +34,21 @@ export type HiveTask = {
   cancel_requested?: boolean;
 };
 
+export type ApprovalRequest = {
+  id: string;
+  tool: string;
+  summary: string;
+  reason: string;
+  risk: string;
+  expires_at: number;
+};
+
+export type GuardStatus = {
+  enabled: boolean;
+  mode: string;
+  lockdown: boolean;
+};
+
 export type Snapshot = {
   protocol_version: number;
   name: string;
@@ -48,6 +63,8 @@ export type Snapshot = {
   activity?: ActivityChip[];
   tools?: string[];
   tasks?: HiveTask[];
+  approvals?: ApprovalRequest[];
+  guard?: GuardStatus;
 };
 
 export type ChatMessage = { role: string; text: string; ts: number };
@@ -272,6 +289,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, source: "web" }),
     }),
+  approve: (id: string, approve: boolean) =>
+    req<{ ok: boolean; error?: string }>("/api/approve", {
+      method: "POST",
+      body: JSON.stringify({ id, approve }),
+    }),
+  lockdown: (on: boolean) =>
+    req<GuardStatus & { ok: boolean }>("/api/guard/lockdown", {
+      method: "POST",
+      body: JSON.stringify({ on }),
+    }),
   wake: () => req("/api/wake", { method: "POST" }),
   barge: () => req("/api/barge", { method: "POST" }),
   setState: (state: AssistantState) =>
@@ -297,7 +324,8 @@ export function openAmySocket(onSnap: (s: Snapshot) => void): WebSocket | null {
         typeof data.caption === "string" ||
         Array.isArray(data.cards) ||
         Array.isArray(data.activity) ||
-        Array.isArray(data.tools)
+        Array.isArray(data.tools) ||
+        Array.isArray(data.approvals)
       ) {
         onSnap(data as Snapshot);
       }

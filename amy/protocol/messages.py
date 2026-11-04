@@ -53,6 +53,23 @@ class HiveTask(BaseModel):
     cancel_requested: bool = False
 
 
+class ApprovalRequest(BaseModel):
+    """A guarded tool call waiting for a human yes/no."""
+
+    id: str
+    tool: str = ""
+    summary: str = ""
+    reason: str = ""
+    risk: str = "medium"
+    expires_at: float = 0.0
+
+
+class GuardStatus(BaseModel):
+    enabled: bool = True
+    mode: str = "standard"
+    lockdown: bool = False
+
+
 class AssistantSnapshot(BaseModel):
     protocol_version: int = PROTOCOL_VERSION
     name: str = ASSISTANT_NAME
@@ -67,6 +84,8 @@ class AssistantSnapshot(BaseModel):
     activity: List[ActivityChip] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)
     tasks: List[HiveTask] = Field(default_factory=list)
+    approvals: List[ApprovalRequest] = Field(default_factory=list)
+    guard: GuardStatus = Field(default_factory=GuardStatus)
 
 
 class ChatMessage(BaseModel):
@@ -104,3 +123,12 @@ class HealthInfo(BaseModel):
     bind: str = ""
     lan: bool = False
     history: List[ChatMessage] = Field(default_factory=list)
+
+
+class ApprovalAnswer(BaseModel):
+    id: str = Field(min_length=1)
+    approve: bool = False
+
+
+class LockdownRequest(BaseModel):
+    on: bool = True

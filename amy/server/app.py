@@ -6,10 +6,13 @@ import asyncio
 import os
 import secrets
 import socket
+import threading
+import time
+from collections import defaultdict, deque
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -18,13 +21,41 @@ from amy.branding import ASSISTANT_NAME, DEFAULT_SERVER_PORT
 from amy.host.ambient import AmbientHost
 from amy.host.events import EventBus
 from amy.protocol.messages import (
+    ApprovalAnswer,
     AssistantSnapshot,
     AssistantState,
     ClientCommand,
     HealthInfo,
+    LockdownRequest,
     TurnRequest,
     TurnResponse,
 )
+
+_AUTH_FAIL_WINDOW_S = 300.0
+_AUTH_FAIL_MAX = 20
+
+
+class _AuthThrottle:
+    """Lock out a client IP after repeated bad tokens."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._fails: Dict[str, Deque[float]] = defaultdict(deque)
+
+    def _prune(self, ip: str, now: float) -> Deque[float]:
+        q = self._fails[ip]
+        while q and now - q[0] > _AUTH_FAIL_WINDOW_S:
+            q.popleft()
+        return q
+
+    def blocked(self, ip: str) -> bool:
+        with self._lock:
+            return len(self._prune(ip, time.time())) >= _AUTH_FAIL_MAX
+
+    def fail(self, ip: str) -> None:
+        with self._lock:
+            now = time.time()
+            self._prune(ip, now).append(now)
 
 
 def _lan_ip() -> str:
@@ -46,29 +77,54 @@ def create_app(
     bind: str = "127.0.0.1",
 ) -> FastAPI:
     bus = host.bus
-    app = FastAPI(title=f"{ASSISTANT_NAME} Server", version="0.1.0")
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    app = FastAPI(title=f"{ASSISTANT_NAME} Server", version="0.1.0", docs_url=None, redoc_url=None, openapi_url=None)
+    # The HUD is served same-origin; cross-origin callers must be listed explicitly.
+    origins = [o.strip() for o in os.environ.get("AMY_CORS_ORIGINS", "").split(",") if o.strip()]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST"],
+            allow_headers=["X-Amy-Token", "Authorization", "Content-Type"],
+        )
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        resp = await call_next(request)
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     app.state.amy_host = host
     app.state.amy_token = token
     app.state.amy_lan = lan
     app.state.amy_bind = bind
+    throttle = _AuthThrottle()
 
     def _check_token(
+        request: Request,
         token_q: Optional[str] = Query(None, alias="token"),
         x_amy_token: Optional[str] = Header(None, alias="X-Amy-Token"),
         authorization: Optional[str] = Header(None),
     ) -> None:
+        ip = request.client.host if request.client else "?"
+        if throttle.blocked(ip):
+            raise HTTPException(status_code=429, detail="too many bad tokens")
         provided = token_q or x_amy_token
         if not provided and authorization and authorization.lower().startswith("bearer "):
             provided = authorization[7:].strip()
         if not provided or not secrets.compare_digest(provided, token):
+            throttle.fail(ip)
             raise HTTPException(status_code=401, detail="invalid token")
+
+    def _guard():
+        g = getattr(host, "guard", None)
+        if g is None:
+            raise HTTPException(status_code=503, detail="guard not ready")
+        return g
 
     web_dist = Path(__file__).resolve().parents[2] / "apps" / "web" / "dist"
     web_src_index = Path(__file__).resolve().parents[2] / "apps" / "web" / "index.html"
@@ -128,6 +184,22 @@ def create_app(
         if task is None:
             return {"ok": False, "error": "unknown task_id"}
         return {"ok": True, "task": task.model_dump()}
+
+    @app.post("/api/approve")
+    def approve(body: ApprovalAnswer, _: None = Depends(_check_token)) -> dict:
+        ok = _guard().broker.resolve(body.id, body.approve, via="hud")
+        return {"ok": ok, "error": None if ok else "unknown or expired approval"}
+
+    @app.get("/api/guard")
+    def guard_status(_: None = Depends(_check_token)) -> dict:
+        g = _guard()
+        return {**g.status(), "pending": len(g.broker.pending())}
+
+    @app.post("/api/guard/lockdown")
+    def guard_lockdown(body: LockdownRequest, _: None = Depends(_check_token)) -> dict:
+        g = _guard()
+        g.set_lockdown(body.on, via="hud")
+        return {"ok": True, **g.status()}
 
     @app.post("/api/state")
     def set_state(cmd: ClientCommand, _: None = Depends(_check_token)) -> AssistantSnapshot:
@@ -296,7 +368,12 @@ def create_app(
         websocket: WebSocket,
         token_q: Optional[str] = Query(None, alias="token"),
     ) -> None:
+        ip = websocket.client.host if websocket.client else "?"
+        if throttle.blocked(ip):
+            await websocket.close(code=4429)
+            return
         if not token_q or not secrets.compare_digest(token_q, token):
+            throttle.fail(ip)
             await websocket.close(code=4401)
             return
         await websocket.accept()
@@ -353,6 +430,13 @@ def create_app(
                         ).strip()
                         if tid:
                             bus.cancel_task(tid)
+                    elif cmd.type == "approve":
+                        g = getattr(host, "guard", None)
+                        aid = str((cmd.payload or {}).get("id") or "").strip()
+                        if g is not None and aid:
+                            g.broker.resolve(
+                                aid, bool((cmd.payload or {}).get("approve")), via="hud"
+                            )
         except WebSocketDisconnect:
             pass
         finally:

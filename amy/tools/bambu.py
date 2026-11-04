@@ -146,7 +146,11 @@ def bambu_control(
     cfg = _settings()
     h = (host or cfg["host"]).strip()
     s = (serial or cfg["serial"]).strip()
-    code = (access_code or cfg["access_code"]).strip()
+    # The configured access code is only ever sent to the configured printer.
+    if h == cfg["host"]:
+        code = (access_code or cfg["access_code"]).strip()
+    else:
+        code = (access_code or "").strip()
     port = int(cfg["mqtt_port"])
     if not h or not s or not code:
         return {

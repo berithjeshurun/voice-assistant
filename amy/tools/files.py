@@ -22,7 +22,7 @@ def _safe(path: str) -> Path:
     if not p.is_absolute():
         p = root / p
     resolved = p.resolve()
-    if not str(resolved).startswith(str(root)):
+    if not resolved.is_relative_to(root):
         raise ValueError(f"path escapes workspace: {path}")
     return resolved
 

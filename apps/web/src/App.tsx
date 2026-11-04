@@ -3,12 +3,15 @@ import AmyOrb from "./components/AmyOrb";
 import ChatView from "./components/ChatView";
 import Dashboard from "./components/Dashboard";
 import DockView from "./components/DockView";
+import GuardPanel from "./components/GuardPanel";
 import {
   ActivityChip,
   api,
+  ApprovalRequest,
   AssistantState,
   ChatMessage,
   getToken,
+  GuardStatus,
   HiveTask,
   HudCard,
   openAmySocket,
@@ -83,6 +86,8 @@ export default function App() {
   const [activity, setActivity] = useState<ActivityChip[]>([]);
   const [cards, setCards] = useState<HudCard[]>([]);
   const [tasks, setTasks] = useState<HiveTask[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [guard, setGuard] = useState<GuardStatus | undefined>(undefined);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -101,6 +106,8 @@ export default function App() {
     if (Array.isArray(s.activity)) setActivity(s.activity);
     if (Array.isArray(s.cards)) setCards(s.cards);
     if (Array.isArray(s.tasks)) setTasks(s.tasks);
+    if (Array.isArray(s.approvals)) setApprovals(s.approvals);
+    if (s.guard) setGuard(s.guard);
   };
 
   useEffect(() => {
@@ -268,6 +275,7 @@ export default function App() {
   }
 
   return (
+    <>
     <Dashboard
       state={state}
       audioLevel={audioLevel}
@@ -288,5 +296,9 @@ export default function App() {
       onWake={() => void api.wake().catch((e) => setError(String(e)))}
       onBarge={() => void api.barge().catch((e) => setError(String(e)))}
     />
+    <div className="guard-overlay">
+      <GuardPanel approvals={approvals} guard={guard} onError={setError} />
+    </div>
+    </>
   );
 }

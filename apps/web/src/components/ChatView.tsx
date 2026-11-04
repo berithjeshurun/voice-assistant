@@ -2,15 +2,18 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityChip,
   api,
+  ApprovalRequest,
   AssistantState,
   ChatMessage,
   getToken,
+  GuardStatus,
   HiveTask,
   HudCard,
   openAmySocket,
   Snapshot,
 } from "../api";
 import ActivityDock from "./ActivityDock";
+import GuardPanel from "./GuardPanel";
 
 type ThreadItem = {
   id: string;
@@ -59,6 +62,8 @@ export default function ChatView() {
   const [tools, setTools] = useState<string[]>([]);
   const [activity, setActivity] = useState<ActivityChip[]>([]);
   const [tasks, setTasks] = useState<HiveTask[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [guard, setGuard] = useState<GuardStatus | undefined>(undefined);
   const [detail, setDetail] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,6 +77,8 @@ export default function ChatView() {
     if (Array.isArray(s.tools)) setTools(s.tools);
     if (Array.isArray(s.activity)) setActivity(s.activity);
     if (Array.isArray(s.tasks)) setTasks(s.tasks);
+    if (Array.isArray(s.approvals)) setApprovals(s.approvals);
+    if (s.guard) setGuard(s.guard);
     if (typeof s.detail === "string") setDetail(s.detail);
 
     const caption = (s.caption || "").trim();
@@ -131,6 +138,8 @@ export default function ChatView() {
         setActivity(snap.activity || []);
         setLiveCards(snap.cards || []);
         setDetail(snap.detail || "");
+        setApprovals(snap.approvals || []);
+        setGuard(snap.guard);
         setError("");
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -267,6 +276,8 @@ export default function ChatView() {
       </div>
 
       {error ? <p className="hud__err">{error}</p> : null}
+
+      <GuardPanel approvals={approvals} guard={guard} onError={setError} />
 
       <form className="hud__composer" onSubmit={onSubmit}>
         <input

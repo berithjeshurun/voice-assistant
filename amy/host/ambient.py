@@ -58,6 +58,8 @@ class AmbientHost:
         self._env: Any = None
         self._home_label = ""
         self._home_tz = ""
+        self._guard: Any = None
+        self._turn_source = "voice"
 
     @property
     def voice_ok(self) -> bool:
@@ -70,6 +72,93 @@ class AmbientHost:
     @property
     def shell(self) -> Any:
         return self._shell
+
+    @property
+    def guard(self) -> Any:
+        return self._guard
+
+    def _install_guard(self, shell: Any) -> None:
+        """Put the safety policy in front of every agent tool. Fails closed."""
+        from amy.guard import Guard, load_guard_config, set_guard
+        from amy.guard.policy import READ_ONLY_TOOLS
+        from amy.tools.voice_host import VOICE_HOST_ALLOWLIST
+
+        reg = (shell._bundle or {}).get("registry")
+        cfg = load_guard_config()
+        if not cfg.enabled:
+            self._log("WARNING: amy.guard.enabled=false — agent tools run with NO safety policy")
+            return
+        guard = Guard(cfg, bus=self.bus, on_log=lambda m: self._log(f"guard {m}"))
+        tok = os.environ.get("AMY_TOKEN") or ""
+        if tok:
+            guard.redactor.add_literal(tok)
+        if reg is None:
+            self._guard = guard
+            set_guard(guard)
+            return
+        try:
+            report = guard.install(reg, exempt=VOICE_HOST_ALLOWLIST)
+            self._log(
+                f"guard mode={cfg.mode} lockdown={cfg.lockdown} "
+                f"wrapped={len(report['inplace']) + len(report['reregistered'])} "
+                f"removed={report['removed']} unwrapped={report['unwrapped']}"
+            )
+        except Exception as e:
+            self._log(f"guard install failed ({e}) — removing every tool with side effects")
+            keep = set(READ_ONLY_TOOLS) | set(VOICE_HOST_ALLOWLIST)
+            for t in list(reg.list_tools()):
+                name = getattr(t, "name", "")
+                if name and name not in keep:
+                    try:
+                        reg.unregister(name)
+                    except Exception:
+                        pass
+        self._guard = guard
+        set_guard(guard)
+
+        # tools_activate re-registers raw tool functions; re-wrap after every change.
+        try:
+            from amy.tools.catalog import get_tool_catalog
+
+            cat = get_tool_catalog()
+            reprune = cat._reprune
+
+            def _reprune_guarded() -> None:
+                reprune()
+                guard.install(reg, exempt=VOICE_HOST_ALLOWLIST)
+
+            cat._reprune = _reprune_guarded  # type: ignore[method-assign]
+        except Exception as e:
+            self._log(f"guard catalog hook failed ({e}) — disabling tools_activate")
+            try:
+                reg.unregister("tools_activate")
+            except Exception:
+                pass
+
+        if self.force_voice or self._voice_ok:
+            guard.broker.voice_approver = self._voice_approve
+
+    def _voice_approve(self, summary: str) -> Optional[bool]:
+        """Ask the person at the mic to confirm a guarded action."""
+        from amy.guard import parse_yes_no
+
+        vs = self._vs
+        if vs is None:
+            return None
+        strict = bool(self._guard and self._guard.cfg.strict)
+        word = "confirm" if strict else "yes"
+        prompt = f"I need your OK first. {summary}. Say {word} to go ahead, or no to cancel."
+        try:
+            self.bus.set_state(AssistantState.speaking, detail="approval")
+            vs.speak(prompt, playback="ffplay")
+            self.bus.set_state(AssistantState.needs_approval, detail="approval")
+            heard = vs.listen_live(max_seconds=6.0) or ""
+        except Exception as e:
+            self._log(f"voice approval: {e}")
+            return None
+        if heard:
+            self.bus.set_caption(heard[:200], role="user")
+        return parse_yes_no(heard, strict=strict)
 
     def start(self) -> "AmbientHost":
         if self._started:
@@ -307,6 +396,8 @@ class AmbientHost:
         except Exception as e:
             self._log(f"tools restrict: {e}")
 
+        self._install_guard(shell)
+
         hcfg = getattr(shell, "_hcfg", None)
         asst = getattr(hcfg, "assistant", None) if hcfg is not None else None
         # Config may still say hitl:true — force voice product off
@@ -353,6 +444,16 @@ class AmbientHost:
                     self.bus.set_caption(ack_text.strip(), role="ack")
 
         def _runner(text: str):
+            guard = self._guard
+            if guard is not None:
+                guard.begin_turn(self._turn_source)
+            try:
+                return _run_turn(text)
+            finally:
+                if guard is not None:
+                    guard.end_turn()
+
+        def _run_turn(text: str):
             from amy.host.hud_cards import cards_from_turn
             from pyhive.core.host.dual_reply import DualReply, parse_dual_reply
 
@@ -1046,6 +1147,7 @@ class AmbientHost:
         self.bus.set_state(AssistantState.thinking, detail="text")
         self.bus.set_caption(text[:420], role="user")
         self.bus.clear_cards()
+        self._turn_source = "text"
         try:
             ans = self._vs.turn_from_text(text)
             reply = str(ans or "")
@@ -1059,6 +1161,8 @@ class AmbientHost:
         except Exception as e:
             self.bus.set_state(AssistantState.error, detail=str(e))
             raise
+        finally:
+            self._turn_source = "voice"
 
     def trigger_wake(self, reason: str = "api") -> None:
         if not self._started or self._daemon is None:
@@ -1068,6 +1172,8 @@ class AmbientHost:
 
     def barge_in(self) -> None:
         self._stop_speak_pulse()
+        if self._guard is not None:
+            self._guard.hard_stop()
         if self._vs is not None:
             self._vs.barge_in()
 

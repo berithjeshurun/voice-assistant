@@ -10,9 +10,11 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Set, Union
 
 from amy.protocol.messages import (
     ActivityChip,
+    ApprovalRequest,
     AssistantSnapshot,
     AssistantState,
     ChatMessage,
+    GuardStatus,
     HiveTask,
     HudCard,
 )
@@ -34,6 +36,9 @@ class EventBus:
         self._tasks: Dict[str, HiveTask] = {}
         self._task_order: Deque[str] = deque(maxlen=24)
         self._history: Deque[ChatMessage] = deque(maxlen=history_limit)
+        self._approvals: List[ApprovalRequest] = []
+        self._guard = GuardStatus()
+        self._state_before_approval: Optional[AssistantState] = None
         self._listeners: Set[Callable[[AssistantSnapshot], None]] = set()
         self._async_queues: List[asyncio.Queue] = []
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -60,6 +65,8 @@ class EventBus:
                 activity=list(self._activity),
                 tools=list(self._tools),
                 tasks=list(reversed(tasks))[:12],
+                approvals=list(self._approvals),
+                guard=self._guard,
             )
 
     def history(self) -> List[ChatMessage]:
@@ -116,6 +123,37 @@ class EventBus:
         cleaned = [str(t).strip() for t in (tools or []) if str(t).strip()]
         with self._lock:
             self._tools = cleaned
+        self._emit(self.snapshot())
+
+    def set_approvals(self, items: List[Union[ApprovalRequest, Dict[str, Any]]]) -> None:
+        normalized: List[ApprovalRequest] = []
+        for a in items or []:
+            try:
+                normalized.append(
+                    a if isinstance(a, ApprovalRequest) else ApprovalRequest.model_validate(a)
+                )
+            except Exception:
+                continue
+        with self._lock:
+            self._approvals = normalized
+            if normalized:
+                if self._state != AssistantState.needs_approval:
+                    self._state_before_approval = self._state
+                self._state = AssistantState.needs_approval
+                self._detail = "approval"
+                first = normalized[0]
+                self._caption = f"Approval needed: {first.summary}"
+                self._caption_role = "status"
+            elif self._state == AssistantState.needs_approval:
+                self._state = self._state_before_approval or AssistantState.thinking
+                self._state_before_approval = None
+        self._emit(self.snapshot())
+
+    def set_guard(self, status: Union[GuardStatus, Dict[str, Any]]) -> None:
+        if isinstance(status, dict):
+            status = GuardStatus.model_validate(status)
+        with self._lock:
+            self._guard = status
         self._emit(self.snapshot())
 
     def note_activity(

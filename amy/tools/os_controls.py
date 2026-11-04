@@ -7,6 +7,7 @@ WMI via Invoke-CimMethod / Get-WmiObject with a clear fallback.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -536,6 +537,14 @@ _PROTECTED_PROCESSES = frozenset(
         "svchost.exe",
         "explorer",
         "explorer.exe",
+        "dwm",
+        "lsaiso",
+        "msmpeng",
+        "nissrv",
+        "securityhealthservice",
+        "mpdefendercoreservice",
+        "python",
+        "pythonw",
     }
 )
 
@@ -602,6 +611,9 @@ def os_process_kill(name: str = "", pid: Optional[int] = None) -> Dict[str, Any]
     raw_name = (name or "").strip()
     if not raw_name:
         return _err("Provide name= (process name) or pid=")
+    # Interpolated into PowerShell below — anything outside this set could break out of the quotes.
+    if not re.fullmatch(r"[A-Za-z0-9._ \-]{1,64}", raw_name):
+        return _err(f"Invalid process name {raw_name!r}")
     base = raw_name.lower().replace(".exe", "").strip()
     if not base or base in _PROTECTED_PROCESSES or f"{base}.exe" in _PROTECTED_PROCESSES:
         return _err(f"Refusing to kill protected process {raw_name!r}")
