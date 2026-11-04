@@ -7,7 +7,6 @@ import threading
 import time
 from typing import Optional
 
-
 # DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_DEFAULT = 0
 DWMWCP_DONOTROUND = 1

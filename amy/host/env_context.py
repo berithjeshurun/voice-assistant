@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
@@ -10,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional
 from zoneinfo import ZoneInfo
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -195,7 +198,7 @@ class EnvAwareness:
             try:
                 self.on_update(snap)
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
         return snap
 
     def start(self) -> None:
@@ -208,7 +211,7 @@ class EnvAwareness:
                 try:
                     self.refresh()
                 except Exception:
-                    pass
+                    _logger.debug("ignored error", exc_info=True)
                 self._stop.wait(self.every_s)
 
         self._thread = threading.Thread(

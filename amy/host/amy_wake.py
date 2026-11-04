@@ -6,6 +6,7 @@ Wake name: Chloe (mishear-tolerant).
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -13,6 +14,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Sequence
 
 import numpy as np
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -154,7 +157,7 @@ class AmyWakeDaemon:
             try:
                 self.on_event(msg)
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
 
     def active_phrases(self) -> List[str]:
         return list(self.phrases) + ["Ctrl+Shift+A (push-to-talk)"]

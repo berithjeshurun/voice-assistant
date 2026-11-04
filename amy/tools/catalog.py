@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any, Dict, List, Optional, Sequence, Set
+
+_logger = logging.getLogger(__name__)
 
 # Pack definitions: category → tool names (registered elsewhere).
 DEFAULT_PACKS: Dict[str, List[str]] = {
@@ -180,12 +183,12 @@ class ToolCatalog:
 
             prune_registry_to_allowlist(self._registry, allowlist=self.allowlist())
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
         if self._on_change:
             try:
                 self._on_change(self.allowlist())
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
 
 
 _catalog: Optional[ToolCatalog] = None

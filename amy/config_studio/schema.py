@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 try:
     import yaml
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
+
+_logger = logging.getLogger(__name__)
 
 # Paths that are huge prose — still editable, but UI marks them longtext.
 _LONGTEXT_HINTS = ("system_prompt", "prompt", "instructions", "template")
@@ -55,7 +58,7 @@ def _dump(data: Dict[str, Any]) -> None:
                 ry.dump(doc, fh)
             return
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     if yaml is None:
         raise RuntimeError("PyYAML required to save config")
     text = yaml.safe_dump(

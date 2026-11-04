@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from amy.hive.delegate import format_delegate_speak, run_specialist
 from amy.hive.registry import list_agents
+
+_logger = logging.getLogger(__name__)
 
 HIVE_DELEGATE_TOOL = "hive_delegate"
 
@@ -31,7 +34,7 @@ def register_hive_delegate_tools(
             try:
                 on_activity(aid or "hive", (goal or "")[:80])
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
         sh = shell
         if sh is None:
             return {

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
+
+_logger = logging.getLogger(__name__)
 
 VoiceApprover = Callable[[str], Optional[bool]]
 
@@ -64,7 +67,7 @@ class ApprovalBroker:
             try:
                 self._on_change(self.pending())
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
 
     def request(
         self,

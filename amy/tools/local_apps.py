@@ -93,7 +93,6 @@ def local_app_open(app_id: str = "", path: str = "/") -> Dict[str, Any]:
     token = os.environ.get("AMY_TOKEN", "")
     # Open dedicated webview pointed at the local app URL.
     try:
-        from amy.host.hud_window import open_hud_subprocess
 
         # Reuse HUD process entry with absolute URL override via --url
         import sys

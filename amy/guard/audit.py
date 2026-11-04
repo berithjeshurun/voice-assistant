@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from amy.logs import current_turn_id
+
+_logger = logging.getLogger(__name__)
 
 _MAX_BYTES = 5 * 1024 * 1024
 
@@ -32,6 +37,9 @@ class AuditLog:
 
     def write(self, record: Dict[str, Any]) -> None:
         rec = {"ts": round(time.time(), 3), **_clip(record)}
+        tid = current_turn_id()
+        if tid:
+            rec.setdefault("turn", tid)
         line = json.dumps(rec, ensure_ascii=False, default=str)
         with self._lock:
             try:
@@ -43,5 +51,5 @@ class AuditLog:
                     self.path.rename(rotated)
                 with self.path.open("a", encoding="utf-8") as f:
                     f.write(line + "\n")
-            except Exception as e:
-                print(f"# amy audit write failed: {e}", flush=True)
+            except OSError as e:
+                _logger.error("audit write failed: %s", e)

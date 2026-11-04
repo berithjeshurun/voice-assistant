@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from pyhive.core.host.live_audio import (  # noqa: F401
+from pyhive.core.host.live_audio import (
     listen_utterance,
     live_audio_backend,
     preload_stt,
     vosk_model_name,
     whisper_model_name,
 )
-
 
 PartialCb = Callable[[str], None]
 

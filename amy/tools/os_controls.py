@@ -6,6 +6,7 @@ WMI via Invoke-CimMethod / Get-WmiObject with a clear fallback.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -13,6 +14,8 @@ import subprocess
 import sys
 import webbrowser
 from typing import Any, Dict, List, Optional
+
+_logger = logging.getLogger(__name__)
 
 
 def _ok(**payload: Any) -> Dict[str, Any]:
@@ -123,7 +126,7 @@ def os_mute(muted: Optional[bool] = None) -> Dict[str, Any]:
         if available():
             return mute_control(muted)
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     # Media-key mute toggle (cannot force on/off without Core Audio)
     script = """
 Add-Type -TypeDefinition @"
@@ -322,7 +325,7 @@ def _resolve_app_windows(target: str) -> Dict[str, Any]:
             except OSError:
                 continue
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
 
     # Get-StartApps (AppX + classic)
     out = _ps(
@@ -349,7 +352,7 @@ def _resolve_app_windows(target: str) -> Dict[str, Any]:
                         matches=data[:5],
                     )
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
 
     # where.exe / PATH
     exe_guess = key if key.endswith(".exe") else f"{key}.exe"

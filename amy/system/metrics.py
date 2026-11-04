@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any, Dict, Optional
+
+_logger = logging.getLogger(__name__)
 
 _last_net: Optional[Dict[str, float]] = None
 _last_net_ts: float = 0.0
@@ -31,7 +34,7 @@ def sample_system() -> Dict[str, Any]:
     try:
         out["cpu_percent"] = float(psutil.cpu_percent(interval=0.05))
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
 
     try:
         vm = psutil.virtual_memory()
@@ -42,7 +45,7 @@ def sample_system() -> Dict[str, Any]:
             "available_gb": round(vm.available / (1024**3), 2),
         }
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
 
     try:
         root = os.environ.get("SystemDrive", "C:") + "\\"
@@ -57,7 +60,7 @@ def sample_system() -> Dict[str, Any]:
             "free_gb": round(du.free / (1024**3), 2),
         }
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
 
     global _last_net, _last_net_ts
     try:
@@ -80,6 +83,6 @@ def sample_system() -> Dict[str, Any]:
             "down_mbps": round((down_bps * 8) / 1_000_000, 3),
         }
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
 
     return out

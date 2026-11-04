@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, List, Sequence
+
+_logger = logging.getLogger(__name__)
 
 # Kept even when agent tools are restricted to OS / Bambu / slicer.
 VOICE_HOST_ALLOWLIST: Sequence[str] = (
@@ -30,7 +33,7 @@ def ensure_voice_host_tools(registry: Any) -> List[str]:
             if callable(fn):
                 specs.append((fn, name, "amy_voice"))
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     try:
         from hivesteam.external import service_voicestudio as vs
 
@@ -39,7 +42,7 @@ def ensure_voice_host_tools(registry: Any) -> List[str]:
             if callable(fn):
                 specs.append((fn, name, "amy_voice"))
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
 
     for fn, name, module in specs:
         try:

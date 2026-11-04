@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List
 
 from amy.apps.secrets import load_app_secrets, redact, secrets_path, write_secrets_template
 from amy.settings.presets import INTEGRATION_CATALOG
+
+_logger = logging.getLogger(__name__)
 
 
 def list_integrations() -> Dict[str, Any]:
@@ -60,7 +63,7 @@ def set_integration_secrets(integration_id: str, values: Dict[str, str]) -> Dict
 
         os.chmod(path, 0o600)
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     # Mirror into process env for immediate use (without logging).
     import os
 

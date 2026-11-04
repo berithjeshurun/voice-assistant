@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List
+
+_logger = logging.getLogger(__name__)
 
 
 def _workspace() -> Path:
@@ -60,5 +63,5 @@ def register(registry: Any) -> List[str]:
         )
         out.append("read_file")
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     return out

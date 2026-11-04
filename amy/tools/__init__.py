@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Iterable, List, Sequence
 
 from amy.tools.catalog import CORE_ALLOWLIST, get_tool_catalog
 from amy.tools.voice_host import VOICE_HOST_ALLOWLIST, ensure_voice_host_tools
+
+_logger = logging.getLogger(__name__)
 
 # Default ambient surface — specialized packs activate via tools_activate.
 AMY_TOOL_ALLOWLIST: Sequence[str] = tuple(CORE_ALLOWLIST)
@@ -68,7 +71,7 @@ def prune_registry_to_allowlist(
         try:
             registry.unregister(name)
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
     return sorted(kept)
 
 
@@ -96,7 +99,7 @@ def setup_amy_tool_surface(registry: Any, *, config: Any = None) -> dict:
             cat._active.update(allow)
         allow = cat.allowlist()
     except Exception as e:
-        print(f"# amy apps register failed: {e}", flush=True)
+        _logger.warning("amy apps register failed: %s", e)
 
     def _on_change(_names: List[str]) -> None:
         register_amy_tools(registry, config=config)
@@ -105,7 +108,7 @@ def setup_amy_tool_surface(registry: Any, *, config: Any = None) -> dict:
 
             apply_apps_to_registry(registry, config=config)
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
         # hive_delegate stays bound by AmbientHost (needs shell) — do not rebind bare.
         ensure_voice_host_tools(registry)
         # Keep hive_delegate if AmbientHost already registered it.
@@ -127,7 +130,7 @@ def setup_amy_tool_surface(registry: Any, *, config: Any = None) -> dict:
             app_tools = apply_apps_to_registry(registry, config=config)
             kept = prune_registry_to_allowlist(registry, allowlist=cat.allowlist())
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
     kept = sorted(
         {
             getattr(t, "name", "")

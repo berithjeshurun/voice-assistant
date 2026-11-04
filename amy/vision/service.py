@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
+_logger = logging.getLogger(__name__)
 
 
 def _root() -> Path:
@@ -38,7 +41,7 @@ class VisionService:
             try:
                 return json.loads(self._index_path.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
         return {"people": {}, "updated": 0.0}
 
     def _save(self) -> None:

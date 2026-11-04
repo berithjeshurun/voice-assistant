@@ -5,18 +5,20 @@ Bevy binary is opt-in via ``AMY_ORB=bevy`` for legacy experiments.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Optional
 
 from amy.branding import DEFAULT_SERVER_PORT
 from amy.host.events import EventBus
 from amy.protocol.messages import AssistantSnapshot
+
+_logger = logging.getLogger(__name__)
 
 
 class OrbBridge:
@@ -132,7 +134,7 @@ class OrbBridge:
                     if msg:
                         print(f"# amy orb: {msg}", flush=True)
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
 
         threading.Thread(
             target=_forward_logs, name="amy-orb-logs", daemon=True
@@ -163,7 +165,7 @@ class OrbBridge:
                     self._stop.wait(2.0)
                     continue
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
             crashes += 1
             delay = min(8.0, 1.5 * crashes)
             print(
@@ -186,7 +188,7 @@ class OrbBridge:
                 proc.stdin.write(f'{{"type":"set_state","state":"{state}"}}\n')
                 proc.stdin.flush()
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
 
     def stop(self) -> None:
         self._stop.set()
@@ -194,7 +196,7 @@ class OrbBridge:
             try:
                 self._unsub()
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
             self._unsub = None
         proc = self._proc
         self._proc = None
@@ -206,4 +208,4 @@ class OrbBridge:
                 try:
                     proc.kill()
                 except Exception:
-                    pass
+                    _logger.debug("ignored error", exc_info=True)

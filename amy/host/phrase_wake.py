@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
 from amy.host.live_stt import _vosk_model, configured_stt_model
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,7 +59,7 @@ class PhraseWakeDaemon:
             try:
                 self.on_event(msg)
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
 
     def active_phrases(self) -> List[str]:
         return list(self.phrases)

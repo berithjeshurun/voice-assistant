@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Optional
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,13 +85,13 @@ class AlertBus:
             try:
                 self.on_emit(alert)
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
         # High severity → optional Scout glance (best-effort, never blocks).
         if alert.severity >= 4:
             try:
                 self._nudge_hive(alert)
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
         return alert
 
     def _nudge_hive(self, alert: Alert) -> None:

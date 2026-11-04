@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import threading
@@ -12,6 +13,8 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from amy.branding import PROTOCOL_VERSION
+
+_logger = logging.getLogger(__name__)
 
 DEFAULT_REPO = "berithjeshurun/voice-assistant"
 CHANNEL_RE = re.compile(r"channel\s*[:=]\s*(app|ui|driver|firmware|other)", re.I)
@@ -41,7 +44,7 @@ def _local_version() -> str:
         if tag:
             return tag
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     return f"protocol-{PROTOCOL_VERSION}"
 
 
