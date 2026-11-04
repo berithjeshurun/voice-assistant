@@ -25,3 +25,9 @@ Wake (Whisper + fuzzy “chloe”) → live VAD → faster-whisper → Assistant
 **Default companions:** orb only. Captions window is opt-in (`AMY_CHAT_WINDOW=1`). Full HUD opens from the launcher or by double-clicking the orb.
 
 **Clients are thin:** Tauri / browser talk HTTP+WebSocket; tools and memory stay in the Python host.
+
+**Safety guard:** after tool setup, `AmbientHost` wraps every registered tool with `amy/guard`
+(re-applied after `tools_activate`). Each call is allowed, held for human approval (voice or HUD),
+or blocked, then redacted and written to `logs/audit.jsonl`. If wrapping fails, tools with side
+effects are removed (fail closed). Pending approvals and guard status ride the normal snapshot
+(`approvals`, `guard`).
