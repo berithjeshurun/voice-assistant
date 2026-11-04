@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import logging
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -11,35 +11,10 @@ import time
 from pathlib import Path
 from typing import List, Optional, Sequence, Set
 
+from amy.host.browsers import find_chromium
 from amy.host.placement import Rect
 
-
-def find_chromium() -> Optional[List[str]]:
-    env = (
-        os.environ.get("AMY_ORB_BROWSER", "").strip()
-        or os.environ.get("AMY_CHAT_BROWSER", "").strip()
-    )
-    if env and Path(env).is_file():
-        return [env]
-    if sys.platform != "win32":
-        for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
-            w = shutil.which(name)
-            if w:
-                return [w]
-        return None
-    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-    local = os.environ.get("LOCALAPPDATA", "")
-    for c in (
-        Path(pf86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-        Path(pf) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-        Path(pf) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe",
-    ):
-        if c.is_file():
-            return [str(c)]
-    which = shutil.which("msedge") or shutil.which("chrome")
-    return [which] if which else None
+_logger = logging.getLogger(__name__)
 
 
 def profile_dir(name: str) -> Path:
@@ -89,7 +64,7 @@ def pids_for_profile(profile_name: str) -> Set[int]:
                 except ValueError:
                     pass
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     return found
 
 
@@ -110,7 +85,7 @@ def kill_profile(profile_name: str) -> int:
                 os.kill(pid, 9)
             n += 1
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
     if n:
         time.sleep(0.35)
     return n
@@ -328,7 +303,7 @@ def follow_orb_window_alpha(
             else:
                 alpha = _env_alpha("idle")
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
         ticks += 1
         # Re-apply frameless periodically — Chromium can restore the title bar.
         if alpha != last or ticks % 4 == 1:

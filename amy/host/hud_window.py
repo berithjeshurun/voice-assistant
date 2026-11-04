@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import threading
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Optional
 
 from amy.branding import ASSISTANT_NAME, DEFAULT_SERVER_PORT
+
+_logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _proc_thread: Optional[threading.Thread] = None
@@ -28,20 +31,9 @@ def _hud_url(host: str, port: int, token: str, path: str = "/") -> str:
 
 
 def _wait(url: str, timeout: float = 20.0) -> bool:
-    import time
+    from amy.host.browsers import wait_for_http
 
-    parsed = urllib.parse.urlparse(url)
-    origin = f"{parsed.scheme}://{parsed.netloc}"
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(origin + "/", timeout=2) as resp:
-                if resp.status < 500:
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.3)
-    return False
+    return wait_for_http(url, timeout=timeout)
 
 
 def run_hud(
@@ -100,7 +92,7 @@ def run_hud(
 
             style_amy_window(f"{ASSISTANT_NAME} HUD")
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
         _ = window
 
     try:
@@ -155,7 +147,7 @@ def open_hud_subprocess(
         log_dir = Path(os.environ.get("AMY_LOG_DIR") or Path.home() / ".amy" / "logs")
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "hud_window.log"
-        log_fh = open(log_path, "a", encoding="utf-8")  # noqa: SIM115 — kept for subprocess life
+        log_fh = open(log_path, "a", encoding="utf-8")
         log_fh.write(f"\n# spawn {host}:{port}\n")
         log_fh.flush()
         subprocess.Popen(

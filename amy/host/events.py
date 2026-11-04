@@ -1,13 +1,25 @@
-"""In-process event fan-out for HUD / WebSocket clients."""
+"""In-process event fan-out for HUD / WebSocket clients.
+
+Two kinds of subscribers:
+
+* ``subscribe(fn)`` — in-process listeners (orb bridge) get every full snapshot.
+* ``watch()`` — WebSocket clients get a level-triggered "dirty" signal and pull the
+  current snapshot at their own pace (see :func:`snapshot_patch`). Bursts coalesce
+  per client, a slow phone never builds an unbounded backlog, and the final value of
+  every field is always delivered.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Deque, Dict, List, Optional, Set, Union
+from collections.abc import Sequence
+from typing import Any, Callable, Deque, Dict, List, Optional, Protocol, Set, Union
 
+from amy.logs import setup_logging
 from amy.protocol.messages import (
     ActivityChip,
     ApprovalRequest,
@@ -19,9 +31,46 @@ from amy.protocol.messages import (
     HudCard,
 )
 
+_logger = logging.getLogger(__name__)
+_host_logger = logging.getLogger("amy.host")
+
+
+class HistoryStore(Protocol):
+    def append(self, msg: ChatMessage) -> None: ...
+    def recent(self, limit: int) -> List[ChatMessage]: ...
+    def search(self, query: str, limit: int) -> List[ChatMessage]: ...
+
+
+def snapshot_patch(prev: Optional[Dict[str, Any]], cur: Dict[str, Any]) -> Dict[str, Any]:
+    """Top-level keys of ``cur`` that differ from ``prev`` (everything when ``prev`` is None)."""
+    if prev is None:
+        return dict(cur)
+    return {k: v for k, v in cur.items() if prev.get(k) != v}
+
+
+class _Watcher:
+    """One WebSocket client's change signal, settable from any thread."""
+
+    __slots__ = ("event", "loop")
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self.loop = loop
+        self.event = asyncio.Event()
+
+    def notify(self) -> None:
+        try:
+            self.loop.call_soon_threadsafe(self.event.set)
+        except RuntimeError:  # loop closed
+            pass
+
 
 class EventBus:
-    def __init__(self, *, history_limit: int = 100) -> None:
+    def __init__(
+        self,
+        *,
+        history_limit: int = 100,
+        history_store: Optional[HistoryStore] = None,
+    ) -> None:
         self._lock = threading.RLock()
         self._state = AssistantState.idle
         self._audio_level = 0.0
@@ -36,23 +85,35 @@ class EventBus:
         self._tasks: Dict[str, HiveTask] = {}
         self._task_order: Deque[str] = deque(maxlen=24)
         self._history: Deque[ChatMessage] = deque(maxlen=history_limit)
+        self._history_store = history_store
         self._approvals: List[ApprovalRequest] = []
         self._guard = GuardStatus()
         self._state_before_approval: Optional[AssistantState] = None
         self._listeners: Set[Callable[[AssistantSnapshot], None]] = set()
-        self._async_queues: List[asyncio.Queue] = []
+        self._watchers: Set[_Watcher] = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._version = 0
+        if history_store is not None:
+            try:
+                self._history.extend(history_store.recent(history_limit))
+            except Exception:
+                _logger.warning("could not load chat history", exc_info=True)
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
 
+    @property
+    def history_store(self) -> Optional[HistoryStore]:
+        return self._history_store
+
+    @property
+    def version(self) -> int:
+        """Increments on every change; lets callers cheaply detect staleness."""
+        return self._version
+
     def snapshot(self) -> AssistantSnapshot:
         with self._lock:
-            tasks = [
-                self._tasks[tid]
-                for tid in list(self._task_order)
-                if tid in self._tasks
-            ]
+            tasks = [self._tasks[tid] for tid in list(self._task_order) if tid in self._tasks]
             return AssistantSnapshot(
                 state=self._state,
                 audio_level=self._audio_level,
@@ -85,22 +146,22 @@ class EventBus:
             if detail:
                 self._detail = detail
             if audio_level is not None:
-                self._audio_level = float(audio_level)
-        self._emit(self.snapshot())
+                self._audio_level = max(0.0, min(1.0, float(audio_level)))
+        self._emit()
 
     def set_caption(self, text: str, *, role: str = "speak") -> None:
         with self._lock:
             self._caption = (text or "").strip()
             self._caption_role = (role or "").strip() if self._caption else ""
-        self._emit(self.snapshot())
+        self._emit()
 
     def clear_caption(self) -> None:
         with self._lock:
             self._caption = ""
             self._caption_role = ""
-        self._emit(self.snapshot())
+        self._emit()
 
-    def set_cards(self, cards: List[Union[HudCard, Dict[str, Any]]]) -> None:
+    def set_cards(self, cards: Sequence[Union[HudCard, Dict[str, Any]]]) -> None:
         normalized: List[HudCard] = []
         for c in cards or []:
             if isinstance(c, HudCard):
@@ -109,23 +170,23 @@ class EventBus:
                 try:
                     normalized.append(HudCard.model_validate(c))
                 except Exception:
-                    continue
+                    _logger.debug("dropping malformed card", exc_info=True)
         with self._lock:
             self._cards = normalized[:12]
-        self._emit(self.snapshot())
+        self._emit()
 
     def clear_cards(self) -> None:
         with self._lock:
             self._cards = []
-        self._emit(self.snapshot())
+        self._emit()
 
-    def set_tools(self, tools: List[str]) -> None:
+    def set_tools(self, tools: Sequence[str]) -> None:
         cleaned = [str(t).strip() for t in (tools or []) if str(t).strip()]
         with self._lock:
             self._tools = cleaned
-        self._emit(self.snapshot())
+        self._emit()
 
-    def set_approvals(self, items: List[Union[ApprovalRequest, Dict[str, Any]]]) -> None:
+    def set_approvals(self, items: Sequence[Union[ApprovalRequest, Dict[str, Any]]]) -> None:
         normalized: List[ApprovalRequest] = []
         for a in items or []:
             try:
@@ -133,7 +194,7 @@ class EventBus:
                     a if isinstance(a, ApprovalRequest) else ApprovalRequest.model_validate(a)
                 )
             except Exception:
-                continue
+                _logger.debug("dropping malformed approval", exc_info=True)
         with self._lock:
             self._approvals = normalized
             if normalized:
@@ -147,14 +208,14 @@ class EventBus:
             elif self._state == AssistantState.needs_approval:
                 self._state = self._state_before_approval or AssistantState.thinking
                 self._state_before_approval = None
-        self._emit(self.snapshot())
+        self._emit()
 
     def set_guard(self, status: Union[GuardStatus, Dict[str, Any]]) -> None:
         if isinstance(status, dict):
             status = GuardStatus.model_validate(status)
         with self._lock:
             self._guard = status
-        self._emit(self.snapshot())
+        self._emit()
 
     def note_activity(
         self,
@@ -171,18 +232,15 @@ class EventBus:
         if not chip.label:
             return
         with self._lock:
-            kept = [
-                c
-                for c in self._activity
-                if not (c.kind == chip.kind and c.label == chip.label)
-            ]
+            kept = [c for c in self._activity if not (c.kind == chip.kind and c.label == chip.label)]
+            cap = self._activity.maxlen or 12
             self._activity.clear()
             self._activity.append(chip)
             for c in kept:
-                if len(self._activity) >= self._activity.maxlen:
+                if len(self._activity) >= cap:
                     break
                 self._activity.append(c)
-        self._emit(self.snapshot())
+        self._emit()
 
     def note_tool(self, name: str, summary: str = "") -> None:
         label = (name or "").strip()
@@ -205,7 +263,7 @@ class EventBus:
                 old = self._task_order.popleft()
                 if old != tid and old in self._tasks:
                     del self._tasks[old]
-        self._emit(self.snapshot())
+        self._emit()
         return task
 
     def get_task(self, task_id: str) -> Optional[HiveTask]:
@@ -219,19 +277,15 @@ class EventBus:
             if task is None:
                 return None
             if task.status == "running":
-                task = task.model_copy(
-                    update={"cancel_requested": True, "status": "cancelled"}
-                )
-                self._tasks[task_id] = task
+                task = task.model_copy(update={"cancel_requested": True, "status": "cancelled"})
             else:
                 task = task.model_copy(update={"cancel_requested": True})
-                self._tasks[task_id] = task
+            self._tasks[task_id] = task
         self.note_activity(
             f"cancel:{task.agent_id or task_id[:8]}",
             kind="hive",
             detail=(task.goal or "")[:80],
         )
-        self._emit(self.snapshot())
         return task
 
     def is_task_cancelled(self, task_id: str) -> bool:
@@ -243,18 +297,26 @@ class EventBus:
 
     def record_turn(self, user: str, assistant: str) -> None:
         now = time.time()
+        msgs = [
+            ChatMessage(role="user", text=user, ts=now),
+            ChatMessage(role="assistant", text=assistant, ts=now),
+        ]
         with self._lock:
             self._last_user = user
             self._last_assistant = assistant
-            self._history.append(ChatMessage(role="user", text=user, ts=now))
-            self._history.append(
-                ChatMessage(role="assistant", text=assistant, ts=now)
-            )
+            self._history.extend(msgs)
             self._state = AssistantState.idle
             if (assistant or "").strip():
                 self._caption = assistant.strip()[:420]
                 self._caption_role = "speak"
-        self._emit(self.snapshot())
+        store = self._history_store
+        if store is not None:
+            for m in msgs:
+                try:
+                    store.append(m)
+                except Exception:
+                    _logger.warning("could not persist chat message", exc_info=True)
+        self._emit()
 
     def subscribe(self, fn: Callable[[AssistantSnapshot], None]) -> Callable[[], None]:
         with self._lock:
@@ -266,33 +328,38 @@ class EventBus:
 
         return _unsub
 
-    def add_async_queue(self, q: asyncio.Queue) -> None:
+    def watch(self) -> _Watcher:
+        """Register a change signal for the running event loop (one per WebSocket)."""
+        w = _Watcher(asyncio.get_running_loop())
         with self._lock:
-            self._async_queues.append(q)
+            self._watchers.add(w)
+        return w
 
-    def remove_async_queue(self, q: asyncio.Queue) -> None:
+    def unwatch(self, w: _Watcher) -> None:
         with self._lock:
-            if q in self._async_queues:
-                self._async_queues.remove(q)
+            self._watchers.discard(w)
 
-    def _emit(self, snap: AssistantSnapshot) -> None:
+    @property
+    def watcher_count(self) -> int:
         with self._lock:
+            return len(self._watchers)
+
+    def _emit(self) -> None:
+        with self._lock:
+            self._version += 1
             listeners = list(self._listeners)
-            queues = list(self._async_queues)
+            watchers = list(self._watchers)
+        for w in watchers:
+            w.notify()
+        if not listeners:
+            return
+        snap = self.snapshot()
         for fn in listeners:
             try:
                 fn(snap)
             except Exception:
-                pass
-        loop = self._loop
-        for q in queues:
-            try:
-                if loop and loop.is_running():
-                    loop.call_soon_threadsafe(q.put_nowait, snap)
-                else:
-                    q.put_nowait(snap)
-            except Exception:
-                pass
+                _logger.debug("bus listener failed", exc_info=True)
 
     def log(self, msg: str) -> None:
-        print(f"# amy {msg}", flush=True)
+        setup_logging()
+        _host_logger.info(msg)

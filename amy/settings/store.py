@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from pathlib import Path
@@ -16,6 +17,11 @@ from amy.settings.presets import (
     VOICE_STYLES,
     persona_preset,
 )
+
+_logger = logging.getLogger(__name__)
+
+PERSONA_BLOCK_START = "\n\nPERSONA PRESET ("
+PERSONA_BLOCK_END = "\n[/PERSONA]"
 
 
 def _settings_path() -> Path:
@@ -104,7 +110,7 @@ class SettingsStore:
             try:
                 self._on_change(snap)
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
         return snap
 
     def apply_runtime(self, snap: Optional[Dict[str, Any]] = None) -> None:
@@ -126,8 +132,9 @@ class SettingsStore:
         data = self.get()
         preset = persona_preset(str(data.get("persona_preset") or "warm"))
         return (
-            f"\n\nPERSONA PRESET ({preset['id']}): {preset.get('prompt') or ''}\n"
+            f"{PERSONA_BLOCK_START}{preset['id']}): {preset.get('prompt') or ''}\n"
             f"Clearance role={data.get('clearance_role')} label={data.get('clearance_label')}."
+            f"{PERSONA_BLOCK_END}"
         )
 
     def options(self) -> Dict[str, Any]:
@@ -143,7 +150,7 @@ class SettingsStore:
                 if data.get("tts_styles"):
                     styles = list(data.get("tts_styles") or styles)
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
         return {
             "voice_presets": voices,
             "voice_styles": styles,

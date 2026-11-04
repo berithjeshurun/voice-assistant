@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from typing import Any, Dict, Optional
 
 from amy.hive.registry import get_agent, list_agents
 from amy.hive.spec import AgentSpec
+from amy.hive_adapter import HiveAdapter
 from amy.protocol.messages import HiveTask
+
+_logger = logging.getLogger(__name__)
 
 
 def _child_registry(parent: Any, tools: tuple[str, ...]) -> Any:
@@ -23,7 +27,7 @@ def _child_registry(parent: Any, tools: tuple[str, ...]) -> Any:
         try:
             child.register(tool, overwrite=True, module="hive_specialist")
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
     return child
 
 
@@ -101,9 +105,10 @@ def run_specialist(
                     log=log,
                 )
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
 
-    parent_reg = (getattr(shell, "_bundle", None) or {}).get("registry")
+    hive = HiveAdapter(shell)
+    parent_reg = hive.registry
     if parent_reg is None:
         return _finish(
             bus,
@@ -116,13 +121,8 @@ def run_specialist(
             log=log,
         )
 
-    parent_agent = getattr(shell, "_agent", None)
-    llm = None
-    if parent_agent is not None:
-        llm = (
-            getattr(getattr(parent_agent, "llm", None), "_pyhive_llm", None)
-            or getattr(parent_agent, "llm", None)
-        )
+    parent_agent = hive.agent
+    llm = hive.llm
     if llm is None:
         return _finish(
             bus,
@@ -173,10 +173,10 @@ def run_specialist(
         hard_verify=False,
         wall_seconds=float(spec.wall_seconds),
         model_spec=str(getattr(parent_agent, "model_spec", "") or ""),
-        hive_config=getattr(shell, "_hcfg", None),
+        hive_config=hive.hive_config,
     )
 
-    ctx = getattr(shell, "_ctx", None)
+    ctx = hive.ctx
     try:
         raw = agent.run(goal, ctx) if ctx is not None else agent.run(goal)
         out = str(raw or "").strip()
@@ -194,7 +194,7 @@ def run_specialist(
                 status = "cancelled"
                 out = out or "Cancelled."
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
 
     return _finish(
         bus,

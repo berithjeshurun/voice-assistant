@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
-import sys
 import threading
-import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Optional
 
 from amy.branding import DEFAULT_SERVER_PORT
+from amy.host.browsers import find_chromium, wait_for_http
 from amy.host.events import EventBus
 from amy.host.placement import captions_rect, dock_rect
+
+_logger = logging.getLogger(__name__)
 
 
 class ChatBridge:
@@ -92,21 +94,10 @@ class ChatBridge:
                 try:
                     proc.terminate()
                 except Exception:
-                    pass
+                    _logger.debug("ignored error", exc_info=True)
 
     def _wait(self, url: str, timeout: float = 45.0) -> bool:
-        parsed = urllib.parse.urlparse(url)
-        origin = f"{parsed.scheme}://{parsed.netloc}"
-        deadline = time.time() + timeout
-        while time.time() < deadline and not self._stop.is_set():
-            try:
-                with urllib.request.urlopen(origin + "/", timeout=2) as resp:
-                    if resp.status < 500:
-                        return True
-            except Exception:
-                pass
-            time.sleep(0.35)
-        return False
+        return wait_for_http(url, timeout=timeout, interval=0.35, stop=self._stop)
 
     def _tauri_bin(self) -> Optional[str]:
         root = Path(__file__).resolve().parents[2]
@@ -161,7 +152,7 @@ class ChatBridge:
                 self._dock_mode = "tauri" if self._dock_enabled else "none"
                 return True
             except Exception:
-                pass
+                _logger.debug("ignored error", exc_info=True)
 
         # pywebview requires the main thread — Amy host already owns that for
         # the HUD server, so captions always use locked-down Chromium/Edge.
@@ -198,27 +189,7 @@ class ChatBridge:
 
     @staticmethod
     def _chromium() -> Optional[list[str]]:
-        env = os.environ.get("AMY_CHAT_BROWSER", "").strip()
-        if env and Path(env).is_file():
-            return [env]
-        if sys.platform != "win32":
-            for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
-                w = shutil.which(name)
-                if w:
-                    return [w]
-            return None
-        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-        local = os.environ.get("LOCALAPPDATA", "")
-        for c in (
-            Path(pf) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-            Path(pf86) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
-            Path(pf) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        ):
-            if c.is_file():
-                return [str(c)]
-        return None
+        return find_chromium(("AMY_CHAT_BROWSER",))
 
     def _reaper(self) -> None:
         while not self._stop.wait(2.5):

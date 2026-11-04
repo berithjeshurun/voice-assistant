@@ -95,7 +95,7 @@ class ChatMessage(BaseModel):
 
 
 class TurnRequest(BaseModel):
-    text: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=8000)
     source: str = "web"
 
 

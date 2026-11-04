@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import signal
 import sys
@@ -11,6 +12,9 @@ from pathlib import Path
 
 from amy.branding import ASSISTANT_NAME, DEFAULT_SERVER_PORT, DEFAULT_WAKE_PHRASE
 from amy.env import apply_env
+from amy.logs import setup_logging
+
+_logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,6 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--home", default=None, help="PYHIVE_HOME override")
     p.add_argument("--config", default=None, help="HIVE_CONFIG override")
+    p.add_argument(
+        "--log-level",
+        default=None,
+        help="Console log level (debug/info/warning). Full detail always goes to logs/amy.jsonl",
+    )
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -81,15 +90,32 @@ def build_parser() -> argparse.ArgumentParser:
     apps_install.add_argument("pack_id", help="Pack id (e.g. smartpanels)")
     apps_status = apps_sub.add_parser("status", help="Status for a pack (or all)")
     apps_status.add_argument("pack_id", nargs="?", default=None)
+
+    doc = sub.add_parser("doctor", help="Check mic, speech, LLM, guard, HUD — what works and what doesn't")
+    doc.add_argument("--json", action="store_true")
+    doc.add_argument("--offline", action="store_true", help="Skip the LLM network probe")
+
+    dev = sub.add_parser("devices", help="Per-device HUD tokens with roles (viewer/user/admin)")
+    dev_sub = dev.add_subparsers(dest="devices_cmd", required=True)
+    dev_add = dev_sub.add_parser("add", help="Create a token for a phone / tablet / laptop")
+    dev_add.add_argument("name")
+    dev_add.add_argument("--role", choices=["viewer", "user", "admin"], default="user")
+    dev_rm = dev_sub.add_parser("remove", help="Revoke a device (its sessions end immediately)")
+    dev_rm.add_argument("name")
+    dev_sub.add_parser("list", help="List devices and roles")
+
+    cert = sub.add_parser("cert", help="Generate a self-signed TLS certificate for HTTPS on the LAN")
+    cert.add_argument("--host", action="append", default=[], help="Extra hostname / IP for the cert")
     return p
 
 
 def _make_host(args: argparse.Namespace):
     from amy.host.ambient import AmbientHost
     from amy.host.events import EventBus
+    from amy.storage import open_history
 
     return AmbientHost(
-        bus=EventBus(),
+        bus=EventBus(history_store=open_history()),
         profile=getattr(args, "profile", "ambient") or "ambient",
         cwd=Path(os.environ.get("AMY_ROOT") or Path.cwd()),
         model=getattr(args, "model", None),
@@ -115,6 +141,54 @@ def cmd_status(args: argparse.Namespace) -> int:
     else:
         for k, v in info.items():
             print(f"{k}={v}")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    apply_env(home=args.home, config=args.config)
+    from amy.doctor import run_cli
+
+    return run_cli(as_json=bool(args.json), probe_network=not args.offline)
+
+
+def cmd_devices(args: argparse.Namespace) -> int:
+    from amy.server.auth import DeviceRegistry
+
+    reg = DeviceRegistry()
+    sub = args.devices_cmd
+    if sub == "add":
+        try:
+            token = reg.add(args.name, role=args.role)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        port = int(os.environ.get("AMY_PORT") or DEFAULT_SERVER_PORT)
+        print(f"device '{args.name}' role={args.role}")
+        print(f"token (shown once): {token}")
+        print(f"open on the device: http(s)://<this-pc-ip>:{port}/?token={token}")
+        return 0
+    if sub == "remove":
+        ok = reg.remove(args.name)
+        print("removed" if ok else "no such device")
+        return 0 if ok else 1
+    devices = reg.list()
+    if not devices:
+        print("no devices — add one with: amy devices add phone --role user")
+    for d in devices:
+        print(f"{d['name']}\t{d['role']}")
+    return 0
+
+
+def cmd_cert(args: argparse.Namespace) -> int:
+    from amy.server.tls import generate_self_signed
+
+    try:
+        cert, key = generate_self_signed(hosts=list(args.host or []))
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"cert: {cert}\nkey:  {key}")
+    print("amy serve picks these up automatically and serves https:// (phones will warn once).")
     return 0
 
 
@@ -199,20 +273,9 @@ def cmd_apps(args: argparse.Namespace) -> int:
 
 
 def _wait_http(host: str, port: int, *, timeout: float = 30.0) -> bool:
-    import time
-    import urllib.request
+    from amy.host.browsers import wait_for_http
 
-    origin = f"http://{host}:{port}/"
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(origin, timeout=1.5) as resp:
-                if resp.status < 500:
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.2)
-    return False
+    return wait_for_http(f"http://{host}:{port}/", timeout=timeout, interval=0.2)
 
 
 def _run_with_server(host, args: argparse.Namespace) -> int:
@@ -254,7 +317,7 @@ def _run_with_server(host, args: argparse.Namespace) -> int:
                 token=token,
                 lan=bool(args.lan),
             )
-        except BaseException as e:  # noqa: BLE001 — surface server death
+        except BaseException as e:
             server_error.append(e)
             print(f"# amy server exited: {e}", flush=True)
         finally:
@@ -322,7 +385,7 @@ def _run_with_server(host, args: argparse.Namespace) -> int:
     try:
         signal.signal(signal.SIGTERM, _on_sig)
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
 
     if getattr(args, "console", False):
 
@@ -374,12 +437,23 @@ def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     if not raw:
         raw = ["run"]
-    elif raw[0] not in {"run", "serve", "status", "apps", "-h", "--help"}:
+    elif raw[0] not in {
+        "run", "serve", "status", "apps", "doctor", "devices", "cert", "-h", "--help",
+    }:
         raw = ["run", *raw]
 
     args = build_parser().parse_args(raw)
+    if args.cmd in ("run", "serve"):
+        apply_env(home=args.home, config=args.config)
+        setup_logging(level=args.log_level)
     if args.cmd == "status":
         return cmd_status(args)
+    if args.cmd == "doctor":
+        return cmd_doctor(args)
+    if args.cmd == "devices":
+        return cmd_devices(args)
+    if args.cmd == "cert":
+        return cmd_cert(args)
     if args.cmd == "apps":
         return cmd_apps(args)
     if args.cmd == "serve":

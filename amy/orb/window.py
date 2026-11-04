@@ -9,18 +9,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
-import shutil
-import subprocess
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
-from pathlib import Path
 from typing import Optional
 
 from amy.branding import ASSISTANT_NAME, DEFAULT_SERVER_PORT
+from amy.host.browsers import find_chromium, wait_for_http
+
+_logger = logging.getLogger(__name__)
 
 
 def _orb_url(host: str, port: int, token: str, hud_url: str = "") -> str:
@@ -62,49 +63,11 @@ def _spawn_hud_from_orb_url(url: str) -> None:
 
 def _wait_for_hud(url: str, timeout: float = 45.0) -> bool:
     """Poll until the HUD answers (server must be up before WebGL orb loads)."""
-    parsed = urllib.parse.urlparse(url)
-    origin = f"{parsed.scheme}://{parsed.netloc}"
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(origin + "/", timeout=2) as resp:
-                if resp.status < 500:
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.4)
-    return False
+    return wait_for_http(url, timeout=timeout, interval=0.4)
 
 
 def _find_chromium() -> Optional[list[str]]:
-    env = os.environ.get("AMY_ORB_BROWSER", "").strip()
-    if env and Path(env).is_file():
-        return [env]
-    candidates: list[str] = []
-    if sys.platform == "win32":
-        pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-        pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
-        local = os.environ.get("LOCALAPPDATA", "")
-        candidates.extend(
-            [
-                str(Path(pf) / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
-                str(Path(pf86) / "Microsoft" / "Edge" / "Application" / "msedge.exe"),
-                str(Path(pf) / "Google" / "Chrome" / "Application" / "chrome.exe"),
-                str(Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe"),
-            ]
-        )
-        which = shutil.which("msedge") or shutil.which("chrome")
-        if which:
-            candidates.insert(0, which)
-    else:
-        for name in ("google-chrome", "chromium", "chromium-browser", "microsoft-edge"):
-            which = shutil.which(name)
-            if which:
-                candidates.append(which)
-    for c in candidates:
-        if c and Path(c).is_file():
-            return [c]
-    return None
+    return find_chromium(("AMY_ORB_BROWSER",))
 
 
 def _run_pywebview(url: str) -> bool:
@@ -156,11 +119,11 @@ def _run_pywebview(url: str) -> bool:
 
             style_amy_window(ASSISTANT_NAME)
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
         try:
             window.events.double_click += lambda: _spawn_hud_from_orb_url(url)
         except Exception:
-            pass
+            _logger.debug("ignored error", exc_info=True)
 
     try:
         try:
@@ -254,7 +217,7 @@ def _run_tk_fallback(url: str, token: str) -> None:
     canvas = tk.Canvas(root, width=size, height=size, highlightthickness=0, bg="#071018")
     canvas.pack(fill="both", expand=True)
     core = canvas.create_oval(20, 20, size - 20, size - 20, fill="#3f738c", outline="")
-    label = canvas.create_text(
+    canvas.create_text(
         size // 2, size // 2, text="Orb\nneeds\nbrowser", fill="#e7f0f7", font=("Segoe UI", 9)
     )
     drag = {"x": 0, "y": 0}
