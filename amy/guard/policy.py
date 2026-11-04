@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -10,8 +11,10 @@ from typing import Any, Callable, Dict, Optional
 
 from amy.guard.config import GuardConfig
 from amy.guard.paths import check_path, is_sensitive, resolve
-from amy.guard.shell import classify_command
+from amy.guard.shell import classify_command, reaches_network
 from amy.guard.urls import check_url
+
+_logger = logging.getLogger(__name__)
 
 _RANK = {"allow": 0, "confirm": 1, "deny": 2}
 _RISK_RANK = {"low": 0, "medium": 1, "high": 2}
@@ -68,6 +71,7 @@ _SCRIPT_EXTS = frozenset({
 _MODEL_EXTS = frozenset({".stl", ".3mf", ".obj", ".step", ".stp", ".amf", ".ply"})
 
 _COMMAND_KEYS = ("command", "cmd", "script", "code", "commands", "line")
+_SHELL_TOOLS = frozenset({"run_powershell", "run_shell"})
 _PATH_KEYS = ("path", "file", "file_path", "filepath", "filename", "dir", "directory",
               "folder", "root", "target", "pattern")
 
@@ -80,7 +84,7 @@ class Decision:
     risk: str = "low"
     args_override: Dict[str, Any] = field(default_factory=dict)
 
-    def escalate(self, action: str, reason: str) -> "Decision":
+    def escalate(self, action: str, reason: str) -> Decision:
         if _RANK[action] > _RANK[self.action]:
             self.action = action
             self.reason = reason
@@ -141,7 +145,7 @@ def _r_open_app(a, c):
         return Decision("confirm", "opens a command shell", f"open {target}", "high")
     if stem in _LOLBINS or name.removesuffix(".exe") in _LOLBINS:
         return Decision("deny", "system tool that can run arbitrary code", f"open {target}", "high")
-    if not path and re.fullmatch(r"[\w .+\-]{1,60}", name) and not Path(name).suffix.lower() in _SCRIPT_EXTS:
+    if not path and re.fullmatch(r"[\w .+\-]{1,60}", name) and Path(name).suffix.lower() not in _SCRIPT_EXTS:
         return Decision("allow", "opens an installed app by name", f"open {name}", "medium")
     try:
         p = resolve(target, Path.cwd())
@@ -150,7 +154,7 @@ def _r_open_app(a, c):
         if is_sensitive(p):
             return Decision("deny", "path holds secrets or credentials", f"open {target}", "high")
     except Exception:
-        pass
+        _logger.debug("ignored error", exc_info=True)
     if re.match(r"^[a-z][a-z0-9+.\-]*:", target, re.I) and not target.lower().startswith("ms-settings:") \
             and not re.match(r"^[a-z]:[\\/]", target, re.I):
         return Decision("deny", "protocol handlers can launch arbitrary programs", f"open {target}", "high")
@@ -225,6 +229,8 @@ def _r_shell(a, c):
         return Decision("deny", "could not find the command to check", "run a shell command", "high")
     verdict, why = classify_command(cmd)
     risk = {"allow": "low", "confirm": "high", "deny": "high"}[verdict]
+    if verdict == "allow" and reaches_network(cmd):
+        risk = "medium"  # ping / DNS lookups can carry data out in a hostname
     return Decision(verdict, why, f"run: {_short(cmd, 140)}", risk)
 
 
@@ -430,7 +436,7 @@ def evaluate(
         return Decision("deny", "Amy is in lockdown — only read-only tools run", d.summary, "high")
     if source == "background" and (tool not in READ_ONLY_TOOLS or d.action != "allow"):
         return Decision("deny", "no user turn is active to approve this", d.summary, d.risk)
-    if tainted and _RISK_RANK[d.risk] >= 1:
+    if tainted and (_RISK_RANK[d.risk] >= 1 or tool in _SHELL_TOOLS):
         d.escalate("confirm", "follows untrusted web content in this turn")
     if cfg.strict and _RISK_RANK[d.risk] >= 1:
         d.escalate("confirm", "strict mode")

@@ -13,10 +13,12 @@ _PRIVATE_SUFFIXES = (".local", ".lan", ".internal", ".home", ".localdomain", ".c
 
 def _ip_private(ip: str) -> bool:
     try:
-        addr = ipaddress.ip_address(ip.split("%")[0])
+        addr: ipaddress.IPv4Address | ipaddress.IPv6Address = ipaddress.ip_address(
+            ip.split("%")[0]
+        )
     except ValueError:
         return False
-    if getattr(addr, "ipv4_mapped", None):
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped is not None:
         addr = addr.ipv4_mapped
     return (
         addr.is_private
@@ -28,11 +30,24 @@ def _ip_private(ip: str) -> bool:
     )
 
 
+def _legacy_ipv4(h: str) -> str:
+    """Dotted form of shorthand IPv4 (``127.1``, ``2130706433``, ``0x7f000001``, ``0177.0.0.1``)."""
+    if not re.fullmatch(r"[0-9a-fx.]+", h) or not re.search(r"\d", h):
+        return ""
+    try:
+        return socket.inet_ntoa(socket.inet_aton(h))
+    except OSError:
+        return ""
+
+
 def host_is_private(host: str, *, resolve: bool = True) -> bool:
-    h = (host or "").strip().strip("[]").lower()
+    h = (host or "").strip().strip("[]").lower().rstrip(".")
     if not h:
         return True
     if h == "localhost" or h.endswith(".localhost") or h.endswith(_PRIVATE_SUFFIXES):
+        return True
+    legacy = _legacy_ipv4(h)
+    if legacy and _ip_private(legacy):
         return True
     if "." not in h and ":" not in h and not h.isdigit():
         return True  # single-label intranet name
@@ -44,7 +59,7 @@ def host_is_private(host: str, *, resolve: bool = True) -> bool:
         infos = socket.getaddrinfo(h, None)
     except Exception:
         return False
-    return any(_ip_private(info[4][0]) for info in infos)
+    return any(_ip_private(str(info[4][0])) for info in infos)
 
 
 _SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.\-]*:(?!\d)", re.I)

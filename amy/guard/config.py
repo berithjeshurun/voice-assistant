@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,6 +38,10 @@ class GuardConfig:
     max_denials_per_turn: int = 3
     tool_caps: Dict[str, int] = field(default_factory=lambda: dict(_DEFAULT_TOOL_CAPS))
     tool_overrides: Dict[str, str] = field(default_factory=dict)
+    # Upper bound for any ``timeout``-style argument a tool accepts (shell, fetch, …).
+    exec_timeout_s: float = 60.0
+    # Tool output longer than this is truncated before the model sees it.
+    max_result_chars: int = 24_000
 
     @property
     def strict(self) -> bool:
@@ -57,7 +62,9 @@ def load_guard_config(raw_yaml: Optional[Dict[str, Any]] = None) -> GuardConfig:
 
                 raw_yaml = yaml.safe_load(Path(cfg_path).read_text(encoding="utf-8")) or {}
             except Exception as e:
-                print(f"# amy guard: config read failed ({e}); using strict defaults", flush=True)
+                logging.getLogger(__name__).error(
+                    "guard config read failed (%s); using strict defaults", e
+                )
                 return GuardConfig(mode="strict")
     g = ((raw_yaml.get("amy") or {}).get("guard") or {}) if isinstance(raw_yaml, dict) else {}
 
@@ -73,6 +80,8 @@ def load_guard_config(raw_yaml: Optional[Dict[str, Any]] = None) -> GuardConfig:
     cfg.max_tool_calls_per_turn = int(g.get("max_tool_calls_per_turn") or 16)
     cfg.max_tool_calls_per_minute = int(g.get("max_tool_calls_per_minute") or 40)
     cfg.max_denials_per_turn = int(g.get("max_denials_per_turn") or 3)
+    cfg.exec_timeout_s = float(g.get("exec_timeout_s") or 60)
+    cfg.max_result_chars = int(g.get("max_result_chars") or 24_000)
 
     root = Path(os.environ.get("AMY_ROOT") or Path.cwd()).resolve()
     roots = [root]

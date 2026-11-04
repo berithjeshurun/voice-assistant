@@ -11,19 +11,32 @@ from typing import List, Tuple
 
 MAX_COMMAND_CHARS = 2000
 
+_EXEC_EXT = r"\.(exe|dll|ps1|psm1|bat|cmd|vbs|vbe|js|jse|wsf|hta|msi|scr|com|lnk|jar)\b"
+_WEB_CLIENT = r"\b(invoke-webrequest|iwr|invoke-restmethod|irm|curl|wget|start-bitstransfer)\b"
+
 _DENY: List[Tuple[str, str]] = [
     # Download-and-execute / obfuscation
     (r"\b(invoke-expression|iex)\b", "dynamic code execution (Invoke-Expression)"),
-    (r"\b(powershell|pwsh)(\.exe)?\b.*\s-(e|ec|en|enc|enco|encodedcommand)\b", "encoded command"),
+    # -EncodedCommand and every prefix PowerShell accepts for it (-e, -ec, -en … -encodedcommand)
+    (r"\b(powershell|pwsh)(\.exe)?\b.*\s-(e|ec|en[a-z]*)\b", "encoded command"),
+    (r"\b(powershell|pwsh)(\.exe)?\b.*\s-(w|wi[a-z]*)\s+(h|hi|hid|hidd|hidde|hidden|1)\b", "hidden PowerShell window"),
+    (r"\[scriptblock\]\s*::\s*create|\.invokereturnasis\(|newscriptblock", "dynamic code execution (scriptblock)"),
+    (r"\[(system\.)?reflection\.assembly\]|\bassembly\]::load", "in-memory assembly load"),
+    (r"&\s*\(\s*(gcm|get-command)\b|\$(pshome|shellid|env:comspec|verbosepreference)\s*\[", "command-name obfuscation"),
     (r"frombase64string|\[convert\]::|system\.text\.encoding", "base64/encoding obfuscation"),
     (r"\[char\]\s*\d|-bxor\b", "character-code obfuscation"),
     (r"%[a-z_]+:~", "cmd variable-substring obfuscation"),
     (r"downloadstring|downloadfile|downloaddata|net\.webclient|start-bitstransfer|bitsadmin", "download-and-run"),
+    (_WEB_CLIENT + r".*(-outfile|-o|--output)\s+\S*" + _EXEC_EXT, "downloads an executable"),
+    (_WEB_CLIENT + r".*(-infile\b|\s-t\s|--upload-file|\s-f\s+\S*=@|--form\s+\S*=@|--data-binary\s+@)", "uploads a local file"),
     (r"\bcertutil\b.*-(urlcache|decode|encode)", "certutil download/decode"),
     (r"\badd-type\b", "compiling arbitrary code (Add-Type)"),
-    (r"\b(mshta|regsvr32|rundll32|cscript|wscript|installutil|msbuild)\b", "living-off-the-land binary"),
+    (r"\b(mshta|regsvr32|rundll32|cscript|wscript|installutil|msbuild|esentutl|ntdsutil)\b", "living-off-the-land binary"),
+    (r"\btftp\b|\bftp(\.exe)?\s+-s:", "file transfer to a remote host"),
+    # Network shares — touching \\host\ leaks the Windows login hash to that host
+    (r"(^|[\s'\"(=,])\\\\[a-z0-9_.\-]+\\", "network share (UNC) access"),
     # Destructive file / disk operations
-    (r"\b(remove-item|ri|rm|del|erase|rmdir|rd)\b[^;|&]*(\s-r\b|-recurse|-rf\b|\s/s\b)", "recursive delete"),
+    (r"\b(remove-item|ri|rm|del|erase|rmdir|rd)\b[^;|&]*(\s-r(e|ec|ecu|ecur|ecurs|ecurse)?\b|-rf\b|\s/s\b)", "recursive delete"),
     (r"\b(remove-item|ri|rm|del|erase)\b[^;|&]*\*", "wildcard delete"),
     (r"(^|[\s;|&])format(\.com)?\s+[a-z]:", "disk format"),
     (r"\b(format-volume|clear-disk|initialize-disk|remove-partition|set-partition|diskpart)\b", "disk/partition change"),
@@ -35,12 +48,17 @@ _DENY: List[Tuple[str, str]] = [
     (r"\bsc(\.exe)?\s+(stop|config|delete)\s+(windefend|wscsvc|mpssvc|securityhealthservice)", "security service tampering"),
     (r"\bset-executionpolicy\b", "execution policy change"),
     (r"\btakeown\b|\bicacls\b.*/grant", "permission takeover"),
+    (r"enablelua|consentpromptbehavior|disableantispyware|\\policies\\microsoft\\windows defender", "UAC / security policy tampering"),
+    (r"image file execution options|\\winlogon\b|\\appinit_dlls|\\silentprocessexit", "execution hijack persistence"),
     # Accounts / persistence / elevation / lateral movement
     (r"\bnet(\.exe)?\s+(user|localgroup|share)\b", "account/share change"),
     (r"\b(new-localuser|set-localuser|remove-localuser|add-localgroupmember)\b", "account change"),
     (r"\bschtasks(\.exe)?\s*/create|\b(register-scheduledtask|new-scheduledtask)\b", "scheduled-task persistence"),
     (r"\bnew-service\b|\bsc(\.exe)?\s+create\b", "service persistence"),
     (r"currentversion\\+run", "autorun persistence"),
+    (r"\$profile\b|microsoft\.powershell_profile\.ps1", "PowerShell profile persistence"),
+    (r"start menu\\+programs\\+startup|\\startup\\", "startup-folder persistence"),
+    (r"__eventfilter|commandlineeventconsumer|activescripteventconsumer|__filtertoconsumerbinding|root\\subscription", "WMI event persistence"),
     (r"\breg(\.exe)?\s+(delete|import|load|restore|save|unload)\b", "registry hive change"),
     (r"-verb\s+runas|\brunas(\.exe)?\s", "privilege elevation"),
     (r"\b(invoke-command|enter-pssession|new-pssession|psexec|invoke-wmimethod)\b", "remote execution"),
@@ -78,10 +96,36 @@ _UNSAFE_GET = {
 }
 
 
+# PowerShell treats these as '-' and quote characters, so attackers use them to dodge filters.
+_LOOKALIKES = str.maketrans(
+    {
+        "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-",
+        "\u2015": "-", "\u2212": "-", "\ufe63": "-", "\uff0d": "-",
+        "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
+        "\u201c": '"', "\u201d": '"', "\u201e": '"',
+        "\u00a0": " ", "\u2007": " ", "\u202f": " ", "\u200b": "", "\u200c": "", "\u200d": "", "\ufeff": "",
+    }
+)
+
+
 def _normalize(cmd: str) -> str:
     # Strip PowerShell backtick and cmd caret escapes used to split keywords.
-    s = cmd.replace("`", "").replace("^", "")
+    s = cmd.translate(_LOOKALIKES).replace("`", "").replace("^", "")
     return re.sub(r"\s+", " ", s).strip().lower()
+
+
+_NETWORK_COMMANDS = {
+    "ping", "nslookup", "resolve-dnsname", "tracert", "test-connection", "test-netconnection",
+}
+
+
+def reaches_network(command: str) -> bool:
+    """True when a (read-only) command sends packets to a host it names."""
+    for seg in _segments(_normalize(command or "")):
+        tok = seg.lstrip(". ").split(" ", 1)[0].removesuffix(".exe")
+        if tok in _NETWORK_COMMANDS:
+            return True
+    return False
 
 
 def _segments(cmd: str) -> List[str]:

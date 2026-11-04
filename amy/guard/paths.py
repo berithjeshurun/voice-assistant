@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
@@ -70,8 +71,14 @@ def is_sensitive(p: Path) -> bool:
 def check_path(path: str, roots: Iterable[Path]) -> Tuple[str, str]:
     """``deny`` for secrets or anything outside *roots*; else ``allow``."""
     roots = [Path(r).resolve() for r in roots]
-    if not (path or "").strip():
+    raw = (path or "").strip()
+    if not raw:
         return "allow", "default location"
+    if raw.startswith(("\\\\", "//")):
+        return "deny", "network share paths are not allowed"
+    after_drive = raw[2:] if re.match(r"^[a-z]:", raw, re.I) else raw
+    if ":" in after_drive:
+        return "deny", "alternate data streams and device paths are not allowed"
     try:
         p = resolve(path, roots[0] if roots else Path.cwd())
     except Exception as e:
