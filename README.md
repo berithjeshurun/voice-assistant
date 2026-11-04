@@ -40,6 +40,61 @@ Wake: **hey chloe**. Hard stop: **Chloe, stop.**
 
 Full HUD is on demand (launcher tray / double-click orb). Legacy captions window: `AMY_CHAT_WINDOW=1` or `--chat-window`.
 
+## Health check
+
+```powershell
+python -m amy doctor            # Python, PYHIVE_HOME, config, guard, STT, mic, ffplay, HUD build, LLM endpoint
+python -m amy doctor --offline  # skip the LLM probe
+python -m amy doctor --json
+```
+
+The same report (plus live host state) is at `GET /api/doctor` for admin devices.
+
+## Devices, roles and HTTPS
+
+The admin token printed at start-up has full control. Give phones and tablets their own
+token instead, so you can limit and revoke them:
+
+```powershell
+python -m amy devices add kitchen-tablet --role viewer   # prints the token once
+python -m amy devices list
+python -m amy devices remove kitchen-tablet              # its sessions end immediately
+```
+
+| Role | Can |
+|------|-----|
+| `viewer` | watch state, history, guard status |
+| `user` | + send turns, wake / barge, enter lockdown |
+| `admin` | + approve guarded actions, leave lockdown, change settings / config / integrations |
+
+Tokens are stored hashed (`~/.amy/devices.json`). Opening a `?token=` link trades it for an
+HttpOnly, SameSite=Strict session cookie and removes the token from the address bar.
+Rotating the admin token signs out every admin session.
+
+For LAN use, serve over HTTPS so tokens and audio never cross Wi-Fi in clear text:
+
+```powershell
+python -m amy cert --host 192.168.1.20   # self-signed cert in ~/.amy/tls (needs .[tls])
+python -m amy serve --lan                # HTTPS on port+1 for the LAN, HTTP stays on 127.0.0.1
+```
+
+Bring your own cert with `AMY_TLS_CERT` / `AMY_TLS_KEY`; change the HTTPS port with `AMY_HTTPS_PORT`.
+
+## Logs and history
+
+| What | Where | Knobs |
+|------|-------|-------|
+| App log (JSON lines, turn ids, secrets redacted) | `logs/amy.jsonl`, rotated 5 × 5 MB | `AMY_LOG_LEVEL`, `--log-level`, `AMY_LOG_DIR`, `AMY_LOG_FILE=0` |
+| Guard audit | `logs/audit.jsonl` | `AMY_AUDIT_LOG` |
+| Chat history (SQLite, survives restarts, searchable) | `~/.amy/history.db` | `AMY_HISTORY=0`, `AMY_HISTORY_DB` |
+
+Every log and audit line from one request carries the same `turn` id. History search:
+`GET /api/history?q=weather&limit=50`.
+
+Other server limits: `AMY_TURN_TIMEOUT_S` (default 300), `AMY_MAX_CLIENTS` live sockets (32),
+`AMY_SESSION_HOURS` (168). One turn runs at a time across voice and HUD; a second one gets
+HTTP 409 and the HUD says Amy is busy.
+
 ## Safety guard
 
 The model is treated as untrusted (Amy may run an uncensored model). Prompts are advice;
@@ -57,26 +112,53 @@ activated via `tools_activate` — passes a policy gate first:
 - **Untrusted content** — after a web page or search result is read, risky actions need approval for the rest of the turn.
 - **Secrets** — stored passwords / tokens are scrubbed from tool output; calls carrying them are blocked.
 - **Limits** — per-turn and per-minute tool caps; three blocked calls lock the rest of the turn.
+  Tool timeouts are clamped to `exec_timeout_s` (60 s) and results truncated to `max_result_chars` (24 000).
+- **Shell after untrusted content** — once a web page has been read in a turn, every shell command needs approval.
+- **Evasion-resistant** — Unicode look-alike dashes/quotes, abbreviated PowerShell flags, numeric IPs
+  (`2130706433`, `0x7f000001`, `127.1`), UNC paths and NTFS streams are normalised before matching.
 - **Audit** — every call, decision and approval → `logs/audit.jsonl` (secrets redacted).
 
 Configure under `amy.guard` in `config/hive.yaml` (`mode: strict` asks for every medium-risk call
-and requires the word "confirm" by voice; `tools:` overrides any tool to `allow` / `confirm` / `deny`).
-On start, check the log line `guard mode=… wrapped=N removed=[…]`.
+and requires the word "confirm" by voice; `tools:` overrides any tool to `allow` / `confirm` / `deny`;
+`exec_timeout_s`, `max_result_chars`). On start, check the log line `guard mode=… wrapped=N removed=[…]`.
 
-HUD API: `POST /api/approve {id, approve}`, `GET /api/guard`, `POST /api/guard/lockdown {on}` (token required).
+`tests/test_redteam.py` holds ~100 attack strings (encoded commands, LOLBins, persistence, exfiltration,
+SSRF, path tricks, prompt injection). Add to it whenever you find a bypass.
+
+HUD API: `POST /api/approve {id, approve}` (admin), `GET /api/guard`, `POST /api/guard/lockdown {on}`.
 
 ## Tests
 
 ```powershell
 python -m pip install -e ".[dev]"
-python -m pytest tests
+pre-commit install                 # ruff + secret / .env checks on every commit
+ruff check amy tests scripts
+mypy
+python -m pytest
+
+cd apps/web
+npm ci
+npm run typecheck
+npm test                           # Vitest + Testing Library
+npm run build
 ```
 
-Guard, policy and server tests run without the Hive libraries.
+Everything runs without the Hive libraries: `tests/fake_pyhive.py` stands in for pyhive so
+the host start-up, guard wiring, wake conversation and barge-in are covered end to end.
+CI (`.github/workflows/ci.yml`) runs all of the above on every push and pull request.
+
+The HUD's TypeScript types in `apps/web/src/generated/protocol.ts` are generated from
+`amy/protocol/messages.py`. After changing a model run `python scripts/gen_protocol_ts.py`;
+CI fails if the file is stale.
 
 ## Layout
 
 - `amy/` — product host (AmbientHost, AmyServer, Hive specialists)
+- `amy/host/` — `ambient.py` orchestrates; `tool_surface`, `turns`, `conversation`,
+  `voice_setup`, `voice_events`, `speak_pulse`, `background`, `events` (event bus)
+- `amy/hive_adapter.py` — the only place that touches pyhive internals
+- `amy/server/` — FastAPI app, auth (roles, devices, sessions), TLS
+- `amy/storage/` — SQLite chat history
 - `amy/guard/` — safety policy, approvals, redaction, audit
 - `apps/web` — React HUD (build with `npm run build` in `apps/web`)
 - `apps/desktop` — Tauri launcher
