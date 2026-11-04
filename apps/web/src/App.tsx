@@ -1,22 +1,29 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, lazy, Suspense, useEffect, useState } from "react";
 import AmyOrb from "./components/AmyOrb";
 import ChatView from "./components/ChatView";
-import Dashboard from "./components/Dashboard";
 import DockView from "./components/DockView";
 import GuardPanel from "./components/GuardPanel";
 import {
   ActivityChip,
+  AmySocket,
   api,
   ApprovalRequest,
   AssistantState,
+  authKey,
   ChatMessage,
-  getToken,
+  establishSession,
   GuardStatus,
   HiveTask,
   HudCard,
   openAmySocket,
+  Role,
+  setToken as storeToken,
   Snapshot,
+  turnErrorMessage,
 } from "./api";
+
+// The orb window never needs the dashboard bundle (charts, config studio, icons).
+const Dashboard = lazy(() => import("./components/Dashboard"));
 
 function viewParam(): string {
   try {
@@ -76,7 +83,8 @@ function isDockView(): boolean {
 }
 
 export default function App() {
-  const [token, setToken] = useState(getToken());
+  const [token, setToken] = useState(authKey());
+  const [role, setRole] = useState<Role | "">("");
   const [tokenInput, setTokenInput] = useState("");
   const [state, setState] = useState<AssistantState>("idle");
   const [audioLevel, setAudioLevel] = useState(0);
@@ -112,7 +120,7 @@ export default function App() {
 
   useEffect(() => {
     if (!token) return;
-    let ws: WebSocket | null = null;
+    let ws: AmySocket | null = null;
     let cancelled = false;
     let poll: ReturnType<typeof setInterval> | undefined;
     (async () => {
@@ -133,8 +141,9 @@ export default function App() {
         /* ignore — WS / next poll will fill */
       }
     })();
-    ws = openAmySocket((snap) => {
-      applySnap(snap);
+    ws = openAmySocket(applySnap, {
+      onRole: setRole,
+      onError: (e) => setError(e),
     });
     // Orb status must stay live even if the socket stalls on “thinking”.
     if (orbOnly) {
@@ -159,14 +168,16 @@ export default function App() {
     };
   }, [orbOnly]);
 
-  const saveToken = () => {
+  const saveToken = async () => {
     const t = tokenInput.trim();
     if (!t) return;
-    sessionStorage.setItem("amy_token", t);
-    const url = new URL(window.location.href);
-    url.searchParams.set("token", t);
-    window.history.replaceState({}, "", url.toString());
-    setToken(t);
+    storeToken(t);
+    if (!(await establishSession())) {
+      setError("That token was not accepted.");
+      return;
+    }
+    setError("");
+    setToken(authKey());
   };
 
   const sendMessage = async (raw: string) => {
@@ -189,7 +200,7 @@ export default function App() {
         { role: "assistant", text: reply, ts: Date.now() / 1000 },
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(turnErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -217,11 +228,16 @@ export default function App() {
           value={tokenInput}
           onChange={(e) => setTokenInput(e.target.value)}
           placeholder="token"
+          type="password"
           autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void saveToken();
+          }}
         />
-        <button type="button" onClick={saveToken}>
+        <button type="button" onClick={() => void saveToken()}>
           Connect
         </button>
+        {error ? <p className="err">{error}</p> : null}
       </div>
     );
   }
@@ -275,7 +291,7 @@ export default function App() {
   }
 
   return (
-    <>
+    <Suspense fallback={<div className="hud-loading">Loading Amy…</div>}>
     <Dashboard
       state={state}
       audioLevel={audioLevel}
@@ -297,8 +313,13 @@ export default function App() {
       onBarge={() => void api.barge().catch((e) => setError(String(e)))}
     />
     <div className="guard-overlay">
-      <GuardPanel approvals={approvals} guard={guard} onError={setError} />
+      <GuardPanel
+        approvals={approvals}
+        guard={guard}
+        onError={setError}
+        canApprove={role === "" || role === "admin"}
+      />
     </div>
-    </>
+    </Suspense>
   );
 }

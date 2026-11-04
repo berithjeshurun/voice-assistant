@@ -1,16 +1,19 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityChip,
+  AmySocket,
   api,
   ApprovalRequest,
   AssistantState,
+  authKey,
   ChatMessage,
-  getToken,
   GuardStatus,
   HiveTask,
   HudCard,
   openAmySocket,
+  Role,
   Snapshot,
+  turnErrorMessage,
 } from "../api";
 import ActivityDock from "./ActivityDock";
 import GuardPanel from "./GuardPanel";
@@ -55,7 +58,8 @@ function clockLabel(ts: number): string {
 }
 
 export default function ChatView() {
-  const [token] = useState(getToken());
+  const [token] = useState(authKey());
+  const [role, setRole] = useState<Role | "">("");
   const [state, setState] = useState<AssistantState>("idle");
   const [items, setItems] = useState<ThreadItem[]>([]);
   const [liveCards, setLiveCards] = useState<HudCard[]>([]);
@@ -126,7 +130,7 @@ export default function ChatView() {
 
   useEffect(() => {
     if (!token) return;
-    let ws: WebSocket | null = null;
+    let ws: AmySocket | null = null;
     let cancelled = false;
     (async () => {
       try {
@@ -145,7 +149,7 @@ export default function ChatView() {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
-    ws = openAmySocket(applySnap);
+    ws = openAmySocket(applySnap, { onRole: setRole, onError: setError });
     return () => {
       cancelled = true;
       ws?.close();
@@ -182,7 +186,7 @@ export default function ChatView() {
         },
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(turnErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -277,7 +281,12 @@ export default function ChatView() {
 
       {error ? <p className="hud__err">{error}</p> : null}
 
-      <GuardPanel approvals={approvals} guard={guard} onError={setError} />
+      <GuardPanel
+        approvals={approvals}
+        guard={guard}
+        onError={setError}
+        canApprove={role === "" || role === "admin"}
+      />
 
       <form className="hud__composer" onSubmit={onSubmit}>
         <input

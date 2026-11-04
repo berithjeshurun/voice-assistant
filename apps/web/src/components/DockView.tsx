@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   ActivityChip,
+  AmySocket,
   AssistantState,
-  getToken,
+  authKey,
   HiveTask,
   HudCard,
   openAmySocket,
@@ -12,7 +13,7 @@ import {
 import ActivityDock from "./ActivityDock";
 
 export default function DockView() {
-  const [token] = useState(getToken());
+  const [token] = useState(authKey());
   const [state, setState] = useState<AssistantState>("idle");
   const [tools, setTools] = useState<string[]>([]);
   const [activity, setActivity] = useState<ActivityChip[]>([]);
@@ -22,7 +23,7 @@ export default function DockView() {
 
   useEffect(() => {
     if (!token) return;
-    let ws: WebSocket | null = null;
+    let ws: AmySocket | null = null;
     let cancelled = false;
     (async () => {
       try {

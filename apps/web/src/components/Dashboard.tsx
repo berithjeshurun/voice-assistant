@@ -1,6 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import AmyOrb from "./AmyOrb";
-import ConfigStudio from "./ConfigStudio";
 import SettingsPanel from "./SettingsPanel";
 import IntegrationsPanel from "./IntegrationsPanel";
 import WorkspacePanel from "./WorkspacePanel";
@@ -38,6 +37,8 @@ import RubberSegment from "./reactbits/RubberSegment";
 import WarmTooltip from "./reactbits/WarmTooltip";
 
 import "./Dashboard.css";
+
+const ConfigStudio = lazy(() => import("./ConfigStudio"));
 
 type Tab = "home" | "manual" | "gallery" | "workspace" | "settings";
 type SettingsPane = "controls" | "voice" | "integrations" | "config";
@@ -565,7 +566,11 @@ export default function Dashboard({
 
             {settingsPane === "voice" ? <SettingsPanel /> : null}
             {settingsPane === "integrations" ? <IntegrationsPanel /> : null}
-            {settingsPane === "config" ? <ConfigStudio /> : null}
+            {settingsPane === "config" ? (
+              <Suspense fallback={<LatticeLoader />}>
+                <ConfigStudio />
+              </Suspense>
+            ) : null}
           </div>
         ) : null}
 

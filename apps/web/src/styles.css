@@ -517,6 +517,15 @@ button:disabled {
   font: inherit;
 }
 
+.hud-loading {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  color: var(--ink);
+  opacity: 0.7;
+  letter-spacing: 0.08em;
+}
+
 .err {
   color: var(--err);
   font-size: 0.85rem;

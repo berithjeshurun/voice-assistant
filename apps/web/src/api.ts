@@ -1,92 +1,111 @@
-export type AssistantState =
-  | "idle"
-  | "listening"
-  | "thinking"
-  | "speaking"
-  | "needs_approval"
-  | "error";
+import type {
+  AssistantSnapshot,
+  AssistantState,
+  ChatMessage,
+  GuardStatus,
+  HealthInfo,
+  HiveTask,
+  TurnResponse,
+} from "./generated/protocol";
 
-export type HudCard = {
-  kind: string;
-  title: string;
-  url: string;
-  snippet: string;
-};
+export type {
+  ActivityChip,
+  ApprovalRequest,
+  AssistantState,
+  ChatMessage,
+  GuardStatus,
+  HiveTask,
+  HudCard,
+} from "./generated/protocol";
 
-export type ActivityChip = {
-  kind: string;
-  label: string;
-  detail: string;
-};
+export type Snapshot = AssistantSnapshot;
+export type Health = HealthInfo;
+export type Role = "viewer" | "user" | "admin";
 
-export type HiveTask = {
-  task_id: string;
-  agent_id: string;
-  agent_name?: string;
-  goal: string;
-  status: string;
-  permission_level?: string;
-  max_steps?: number;
-  wall_seconds?: number;
-  ms?: number;
-  output?: string;
-  parent_id?: string | null;
-  cancel_requested?: boolean;
-};
+// --- auth ----------------------------------------------------------------------------
+// A `?token=` link is traded once for an HttpOnly session cookie; afterwards the token
+// is dropped from the URL and storage so it cannot leak via history, screenshots or
+// Referer. The in-memory copy keeps this page working if cookies are unavailable.
 
-export type ApprovalRequest = {
-  id: string;
-  tool: string;
-  summary: string;
-  reason: string;
-  risk: string;
-  expires_at: number;
-};
+const TOKEN_KEY = "amy_token";
+const SESSION_FLAG = "amy_session";
+let memToken = "";
 
-export type GuardStatus = {
-  enabled: boolean;
-  mode: string;
-  lockdown: boolean;
-};
-
-export type Snapshot = {
-  protocol_version: number;
-  name: string;
-  state: AssistantState;
-  audio_level: number;
-  last_user: string;
-  last_assistant: string;
-  detail: string;
-  caption?: string;
-  caption_role?: string;
-  cards?: HudCard[];
-  activity?: ActivityChip[];
-  tools?: string[];
-  tasks?: HiveTask[];
-  approvals?: ApprovalRequest[];
-  guard?: GuardStatus;
-};
-
-export type ChatMessage = { role: string; text: string; ts: number };
-
-export type Health = {
-  ok: boolean;
-  name: string;
-  state: AssistantState;
-  voice: boolean;
-  wake: boolean;
-  bind: string;
-  lan: boolean;
-  history: ChatMessage[];
-};
+function stripTokenFromUrl(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("token")) return;
+  url.searchParams.delete("token");
+  window.history.replaceState(window.history.state, "", url.toString());
+}
 
 export function getToken(): string {
+  if (memToken) return memToken;
   const q = new URLSearchParams(window.location.search).get("token");
   if (q) {
-    sessionStorage.setItem("amy_token", q);
+    sessionStorage.setItem(TOKEN_KEY, q);
     return q;
   }
-  return sessionStorage.getItem("amy_token") || "";
+  return sessionStorage.getItem(TOKEN_KEY) || "";
+}
+
+export function hasSession(): boolean {
+  return sessionStorage.getItem(SESSION_FLAG) === "1";
+}
+
+/** Truthy when this page can talk to the host (token or session cookie). */
+export function authKey(): string {
+  return getToken() || (hasSession() ? "session" : "");
+}
+
+export function setToken(token: string): void {
+  memToken = token;
+  sessionStorage.setItem(TOKEN_KEY, token);
+}
+
+/** Exchange the token for a session cookie; returns false when access is denied. */
+export async function establishSession(): Promise<boolean> {
+  const token = getToken();
+  try {
+    if (token) {
+      const res = await fetch("/api/session", {
+        method: "POST",
+        headers: { "X-Amy-Token": token },
+        credentials: "same-origin",
+      });
+      if (!res.ok) return false;
+      memToken = token;
+    }
+    const who = await fetch("/api/whoami", { credentials: "same-origin" });
+    if (!who.ok) {
+      sessionStorage.removeItem(SESSION_FLAG);
+      return Boolean(token);
+    }
+    sessionStorage.setItem(SESSION_FLAG, "1");
+    sessionStorage.removeItem(TOKEN_KEY);
+    stripTokenFromUrl();
+    return true;
+  } catch {
+    return Boolean(token);
+  }
+}
+
+export async function endSession(): Promise<void> {
+  memToken = "";
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(SESSION_FLAG);
+  await fetch("/api/session", { method: "DELETE", credentials: "same-origin" }).catch(
+    () => undefined,
+  );
+}
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
 }
 
 export function apiBase(): string {
@@ -98,11 +117,36 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (token) headers.set("X-Amy-Token", token);
   if (init?.body) headers.set("Content-Type", "application/json");
-  const sep = path.includes("?") ? "&" : "?";
-  const url = `${apiBase()}${path}${token ? `${sep}token=${encodeURIComponent(token)}` : ""}`;
-  const res = await fetch(url, { ...init, headers });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const res = await fetch(`${apiBase()}${path}`, {
+    ...init,
+    headers,
+    credentials: "same-origin",
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = String(body?.detail ?? body?.error ?? detail);
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, `${res.status} ${detail}`);
+  }
   return res.json() as Promise<T>;
+}
+
+export const BUSY_MESSAGE = "Amy is still working on another request — try again in a moment.";
+
+/** Human message for a failed turn (409 busy, 504 timeout, auth). */
+export function turnErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 409) return BUSY_MESSAGE;
+    if (err.status === 504) return "That took too long and was stopped.";
+    if (err.status === 401) return "Session expired — reopen the link from the host.";
+    if (err.status === 403) return "This device is not allowed to do that.";
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg === "busy" ? BUSY_MESSAGE : msg;
 }
 
 export type SystemMetrics = {
@@ -284,8 +328,13 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ task_id }),
     }),
+  whoami: () => req<{ ok: boolean; name: string; role: Role }>("/api/whoami"),
+  history: (limit = 50, q = "") =>
+    req<{ ok: boolean; history: ChatMessage[] }>(
+      `/api/history?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+    ),
   turn: (text: string) =>
-    req<{ ok: boolean; reply: string; error?: string }>("/api/turn", {
+    req<TurnResponse>("/api/turn", {
       method: "POST",
       body: JSON.stringify({ text, source: "web" }),
     }),
@@ -308,31 +357,140 @@ export const api = {
     }),
 };
 
-export function openAmySocket(onSnap: (s: Snapshot) => void): WebSocket | null {
-  const token = getToken();
-  if (!token) return null;
+// --- live socket ---------------------------------------------------------------------
+
+export type TurnResult = { ok: boolean; reply: string; error?: string };
+
+export type SocketEvent =
+  | { kind: "snapshot"; snapshot: Snapshot; role?: Role }
+  | { kind: "turn_result"; result: TurnResult }
+  | { kind: "error"; error: string; command?: string }
+  | { kind: "ignore" };
+
+/** Fold one server frame into the current snapshot (server sends a snapshot, then patches). */
+export function reduceSocketMessage(current: Snapshot | null, raw: unknown): SocketEvent {
+  if (!raw || typeof raw !== "object") return { kind: "ignore" };
+  const msg = raw as Record<string, unknown>;
+  switch (msg.type) {
+    case "snapshot":
+      return {
+        kind: "snapshot",
+        snapshot: msg.data as Snapshot,
+        role: msg.role as Role | undefined,
+      };
+    case "patch":
+      if (!current || !msg.data || typeof msg.data !== "object") return { kind: "ignore" };
+      return { kind: "snapshot", snapshot: { ...current, ...(msg.data as Partial<Snapshot>) } };
+    case "turn_result":
+      return {
+        kind: "turn_result",
+        result: {
+          ok: Boolean(msg.ok),
+          reply: String(msg.reply ?? ""),
+          error: msg.error == null ? undefined : String(msg.error),
+        },
+      };
+    case "error":
+      return {
+        kind: "error",
+        error: String(msg.error ?? "error"),
+        command: msg.command == null ? undefined : String(msg.command),
+      };
+    case undefined:
+      // pre-v2 servers pushed bare snapshots
+      return "state" in msg ? { kind: "snapshot", snapshot: msg as Snapshot } : { kind: "ignore" };
+    default:
+      return { kind: "ignore" };
+  }
+}
+
+export type AmySocket = {
+  close(): void;
+  send(cmd: { type: string; text?: string; state?: AssistantState; payload?: object }): boolean;
+};
+
+export type SocketHandlers = {
+  onTurnResult?: (r: TurnResult) => void;
+  onError?: (error: string) => void;
+  onRole?: (role: Role) => void;
+  onConnection?: (connected: boolean) => void;
+};
+
+const WS_AUTH_FAILED = 4401;
+const WS_THROTTLED = 4429;
+
+export function reconnectDelay(attempt: number, code?: number): number {
+  const base = code === WS_THROTTLED ? 15_000 : 500;
+  return Math.min(30_000, base * 2 ** Math.min(attempt, 6)) + Math.floor(Math.random() * 250);
+}
+
+/** Live snapshot stream with patch merging and reconnect/backoff. */
+export function openAmySocket(
+  onSnap: (s: Snapshot) => void,
+  handlers: SocketHandlers = {},
+): AmySocket | null {
+  if (!authKey()) return null;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(
-    `${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`
-  );
-  ws.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
-      if (
-        data.state ||
-        typeof data.audio_level === "number" ||
-        typeof data.caption === "string" ||
-        Array.isArray(data.cards) ||
-        Array.isArray(data.activity) ||
-        Array.isArray(data.tools) ||
-        Array.isArray(data.approvals)
-      ) {
-        onSnap(data as Snapshot);
+  let ws: WebSocket | null = null;
+  let current: Snapshot | null = null;
+  let closed = false;
+  let attempt = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const connect = () => {
+    // Prefer the session cookie so the token never appears in a URL.
+    const token = hasSession() ? "" : getToken();
+    const query = token ? `?token=${encodeURIComponent(token)}` : "";
+    ws = new WebSocket(`${proto}://${location.host}/ws${query}`);
+    ws.onopen = () => {
+      attempt = 0;
+      handlers.onConnection?.(true);
+    };
+    ws.onmessage = (ev) => {
+      let data: unknown;
+      try {
+        data = JSON.parse(ev.data);
+      } catch {
+        return;
       }
-      if (data.type === "turn_result" && data.snapshot) onSnap(data.snapshot);
-    } catch {
-      /* ignore */
-    }
+      const event = reduceSocketMessage(current, data);
+      if (event.kind === "snapshot") {
+        current = event.snapshot;
+        if (event.role) handlers.onRole?.(event.role);
+        onSnap(event.snapshot);
+      } else if (event.kind === "turn_result") {
+        handlers.onTurnResult?.(event.result);
+      } else if (event.kind === "error") {
+        handlers.onError?.(event.error);
+      }
+    };
+    ws.onclose = (ev) => {
+      handlers.onConnection?.(false);
+      ws = null;
+      if (closed) return;
+      if (ev.code === WS_AUTH_FAILED) {
+        if (hasSession() && getToken()) {
+          sessionStorage.removeItem(SESSION_FLAG);
+        } else {
+          handlers.onError?.("Not authorized — reopen the link from the host.");
+          return;
+        }
+      }
+      timer = setTimeout(connect, reconnectDelay(attempt++, ev.code));
+    };
   };
-  return ws;
+
+  connect();
+  return {
+    close() {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      ws?.close();
+    },
+    send(cmd) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(JSON.stringify(cmd));
+      return true;
+    },
+  };
 }
