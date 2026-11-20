@@ -39,7 +39,10 @@ def test_bad_token_throttled(tmp_path):
     _, c = _client(tmp_path)
     for _ in range(20):
         assert c.get("/api/guard?token=nope").status_code == 401
-    assert c.get("/api/guard?token=tok-123").status_code == 429
+    # Further bad tokens are locked out; a valid token still works and clears the lock.
+    assert c.get("/api/guard?token=nope").status_code == 429
+    assert c.get("/api/guard?token=tok-123").status_code == 200
+    assert c.get("/api/guard?token=nope").status_code == 401
 
 
 def test_approve_endpoint(tmp_path):

@@ -1,4 +1,4 @@
-# Amy product entry — always-on host + HUD server + persistent companion orb.
+# Amy product entry - always-on host + HUD server + persistent companion orb.
 param(
   [switch]$Lan,
   [switch]$Console,
@@ -12,7 +12,7 @@ Write-Host "Amy voice host"
 Write-Host "  HIVE_CONFIG=$env:HIVE_CONFIG"
 Write-Host "  PYHIVE_HOME=$env:PYHIVE_HOME"
 Write-Host "  wake: Whisper hey chloe / chloe | Ctrl+Shift+A (no Vosk)"
-Write-Host "  stt: faster-whisper medium.en (GPU) — wake + conversation + barge-in"
+Write-Host "  stt: faster-whisper medium.en (GPU) - wake + conversation + barge-in"
 Write-Host "  tools: auto-approve (no [y/N] confirms)"
 Write-Host "  orb: Crystalized Ball (use -NoOrb to disable)"
 

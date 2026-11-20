@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -72,6 +73,7 @@ class AmbientHost:
         model: Optional[str] = None,
         wake_phrase: Optional[str] = None,
         force_voice: bool = False,
+        listen: bool = True,
         max_steps: int = 14,
         on_log: Optional[Callable[[str], None]] = None,
     ) -> None:
@@ -83,6 +85,7 @@ class AmbientHost:
             wake_phrase or os.environ.get("AMY_WAKE_PHRASE") or DEFAULT_WAKE_PHRASE
         )
         self.force_voice = force_voice
+        self.listen = listen
         self.max_steps = max_steps
         self._log = on_log or self.bus.log
 
@@ -174,7 +177,9 @@ class AmbientHost:
             self._log(f"tools restrict: {e}")
             _logger.error("tool setup failed", exc_info=True)
 
-        approver = self._voice_approve if (self.force_voice or self._voice_ok) else None
+        approver = (
+            self._voice_approve if self.listen and (self.force_voice or self._voice_ok) else None
+        )
         self._guard = install_guard(hive, self.bus, self._log, voice_approver=approver)
 
         hive.disable_hitl()
@@ -204,10 +209,25 @@ class AmbientHost:
             self._log(f"settings apply: {e}")
             _logger.warning("settings apply failed", exc_info=True)
         install_early_speak(hive, vs, self.bus, self._pulse)
-        warmup(hive, vs, self.bus, self._log, tts=self._voice_ok or self.force_voice)
+        if self.listen:
+            try:
+                from amy.host.barge import install_phrase_barge
 
+                install_phrase_barge(vs, self._log)
+            except Exception as e:
+                self._log(f"barge gate: {e}")
+                _logger.warning("phrase barge install failed", exc_info=True)
+        else:
+            vs._start_barge_watch = lambda: None
+
+        # Accept HUD / text turns as soon as the voice session exists. TTS warmup
+        # (esp. VoiceStudio Friday) can take a long time and used to block
+        # ``_started``, causing HostNotStarted while the HUD was already up.
         self._start_background(hive, amb)
-        self._start_wake(amb)
+        if self.listen:
+            self._start_wake(amb)
+        else:
+            self._log("mic off (--no-mic): no wake word, barge-in or spoken approvals")
 
         stt_tag = (
             f"{os.environ.get('PYHIVE_STT_BACKEND', 'faster_whisper')}:"
@@ -219,9 +239,27 @@ class AmbientHost:
         )
         self.bus.set_state(AssistantState.idle, detail="ready")
         self._started = True
+
+        want_tts = bool(self._voice_ok or self.force_voice)
+        threading.Thread(
+            target=lambda: warmup(
+                hive, vs, self.bus, self._log, tts=want_tts
+            ),
+            name="amy-warmup",
+            daemon=True,
+        ).start()
         return self
 
     def _preload_stt(self) -> None:
+        try:
+            from amy.host.stt import install_stt_patch
+
+            tag = install_stt_patch()
+            self._log(f"stt ready {tag}")
+            return
+        except Exception as e:
+            self._log(f"amy stt gpu patch failed ({e}); trying pyhive preload")
+            _logger.warning("amy STT patch failed", exc_info=True)
         from pyhive.core.host.live_audio import preload_stt
 
         model_name = (
@@ -281,14 +319,28 @@ class AmbientHost:
             self._pending_wake_transcript = getattr(ev, "transcript", "") or ""
             threading.Thread(target=self._handle_wake, name="amy-convo", daemon=True).start()
 
+        gain = float(os.environ.get("AMY_MIC_GAIN") or os.environ.get("PYHIVE_MIC_GAIN") or 4.0)
         daemon = AmyWakeDaemon(
             phrases=wake_phrases(self.wake_phrase),
             on_wake=_on_wake,
             on_event=self._log,
             cooldown_ms=max(cooldown, 1600),
-            gain=float(os.environ.get("AMY_MIC_GAIN") or os.environ.get("PYHIVE_MIC_GAIN") or 1.4),
+            gain=gain,
             enabled=True,
         )
+        # Keep conversation STT on the same physical mic (not speaker loopback).
+        try:
+            import sounddevice as sd
+
+            from amy.host.amy_wake import resolve_mic_device
+
+            mic = resolve_mic_device()
+            if mic is not None:
+                out_dev = sd.default.device[1] if isinstance(sd.default.device, (list, tuple)) else None
+                sd.default.device = (mic, out_dev)
+                self._log(f"mic default input={mic}")
+        except Exception as e:
+            self._log(f"mic default: {e}")
         started = daemon.start()
         self._daemon = daemon
         self._wake_ok = bool(started.get("ok"))
@@ -373,8 +425,13 @@ class AmbientHost:
         text = (text or "").strip()
         if not text:
             return ""
+        # HUD can come up before host.start() finishes — wait briefly.
         if not self._started or self._vs is None:
-            raise HostNotStarted("AmbientHost not started")
+            deadline = time.time() + 45.0
+            while (not self._started or self._vs is None) and time.time() < deadline:
+                time.sleep(0.15)
+            if not self._started or self._vs is None:
+                raise HostNotStarted("AmbientHost not started")
         if self._runner is not None and self._runner.busy:
             raise HostBusy("Amy is still working on the previous request")
         self._refresh_env()

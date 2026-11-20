@@ -49,8 +49,9 @@ fi
 
 export AMY_STT_BACKEND="${AMY_STT_BACKEND:-faster_whisper}"
 export PYHIVE_STT_BACKEND="${PYHIVE_STT_BACKEND:-faster_whisper}"
-export AMY_WHISPER_MODEL="${AMY_WHISPER_MODEL:-medium.en}"
-export PYHIVE_WHISPER_MODEL="${PYHIVE_WHISPER_MODEL:-medium.en}"
+# small.en on CPU — medium.en without CUDA adds ~10s per wake utterance
+export AMY_WHISPER_MODEL="${AMY_WHISPER_MODEL:-small.en}"
+export PYHIVE_WHISPER_MODEL="${PYHIVE_WHISPER_MODEL:-small.en}"
 export PYHIVE_HITL=0
 export PYHIVE_APPROVE=1
 

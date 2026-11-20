@@ -75,15 +75,16 @@ body {
 .orb-stage {
   position: fixed;
   inset: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: 1fr auto;
   align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  padding: 0.45rem 0.45rem 1.25rem;
+  justify-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.55rem 0.7rem;
   /* Full-bleed dark — window rounding is DWM, not CSS (avoids white corner bleed) */
   background:
-    radial-gradient(circle at 50% 42%, rgba(77, 184, 232, 0.1), transparent 58%),
+    radial-gradient(circle at 50% 38%, rgba(61, 206, 167, 0.08), transparent 52%),
+    radial-gradient(circle at 50% 40%, rgba(77, 184, 232, 0.1), transparent 58%),
     linear-gradient(165deg, #0a1520 0%, #071018 55%, #0d1c28 100%) !important;
   border: none;
   border-radius: 0;
@@ -92,6 +93,14 @@ body {
   user-select: none;
   opacity: 1;
   overflow: hidden;
+}
+
+.orb-stage__ball {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 html.orb-page,
@@ -105,17 +114,36 @@ body.orb-page #root {
   background-image: none !important;
 }
 
+.orb-stage__dock {
+  width: min(92%, 300px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0;
+  pointer-events: none;
+  z-index: 2;
+  min-height: 2.4rem;
+}
+
 .orb-caption {
-  width: min(92vw, 340px);
-  max-height: 22vh;
+  width: 100%;
+  max-height: 3.9rem;
   overflow: hidden;
-  padding: 0.55rem 0.75rem;
-  border-radius: 0.85rem;
-  font-size: 0.92rem;
-  line-height: 1.35;
-  color: #e8f2f8;
-  background: rgba(8, 14, 22, 0.85);
-  border: 1px solid rgba(77, 184, 232, 0.22);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.7rem;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  font-size: 0.8rem;
+  line-height: 1.28;
+  letter-spacing: 0.01em;
+  color: rgba(236, 246, 252, 0.96);
+  background: rgba(6, 12, 18, 0.82);
+  border: 1px solid rgba(61, 206, 167, 0.22);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   text-align: center;
   animation: orb-caption-in 0.28s ease;
 }
@@ -141,38 +169,23 @@ body.orb-page #root {
 }
 
 .orb-stage .amy-orb {
-  width: min(96%, 84%);
-  height: min(96%, 84%);
+  width: min(92%, 78%);
+  height: min(92%, 78%);
   aspect-ratio: 1;
-  max-width: 360px;
-  max-height: 360px;
+  max-width: 340px;
+  max-height: 340px;
   min-height: 0;
-  flex-shrink: 0;
-}
-
-.orb-stage__status {
-  position: absolute;
-  bottom: 0.45rem;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(94%, 360px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.18rem;
-  pointer-events: none;
-  text-align: center;
 }
 
 .orb-stage__detail {
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.68rem;
-  letter-spacing: 0.03em;
-  color: rgba(200, 220, 235, 0.92);
-  background: rgba(6, 12, 18, 0.72);
-  border: 1px solid rgba(77, 184, 232, 0.2);
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  color: rgba(200, 220, 235, 0.88);
+  background: rgba(6, 12, 18, 0.7);
+  border: 1px solid rgba(77, 184, 232, 0.18);
   border-radius: 999px;
-  padding: 0.18rem 0.55rem;
+  padding: 0.16rem 0.55rem;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -181,9 +194,9 @@ body.orb-page #root {
 
 .orb-stage__env {
   font-family: "JetBrains Mono", ui-monospace, monospace;
-  font-size: 0.62rem;
+  font-size: 0.6rem;
   letter-spacing: 0.02em;
-  color: rgba(138, 163, 181, 0.95);
+  color: rgba(138, 163, 181, 0.9);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -198,13 +211,12 @@ body.orb-page #root {
   cursor: default;
 }
 
-.orb-stage__label {
-  font-family: "JetBrains Mono", monospace;
-  font-size: 0.68rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(180, 205, 220, 0.9);
-  pointer-events: none;
+.orb-stage[data-state="speaking"] .orb-caption {
+  border-color: rgba(61, 206, 167, 0.38);
+}
+
+.orb-stage[data-state="listening"] .orb-caption {
+  border-color: rgba(77, 184, 232, 0.4);
 }
 
 .caption-block {

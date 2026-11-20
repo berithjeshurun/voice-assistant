@@ -104,7 +104,7 @@ model:
   # Stack-wide default model (library code does NOT hardcode a tag).
   # Override order: --model → PYHIVE_MODEL → profiles.<name>.model.spec → this spec
   # Remote Ollama via SSH — tag must exist on the remote host
-  spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+  spec: qwen3:14b
   # Sampling — low temp = stricter; ambient profile forces think: false for voice
   temperature: 0.1
   top_p: 0.8
@@ -126,8 +126,8 @@ model:
     port: 11434
 
     ssh:
-      host: 192.168.68.69
-      user: suhaspampana
+      host: 192.168.68.89
+      user: user
       port: 22
       identity_file: null
       remote_host: 127.0.0.1
@@ -216,7 +216,7 @@ assistant:
     dual_response: true
     ack:
       default_intent: generic
-      query_intents: [weather, time, search, calendar]
+      query_intents: [weather, time, search, calendar, os, media]
       context_intents: [weather, time, calendar]
       # Do NOT include bare "tell me" — it matches "tell me about yourself" and
       # forces a task ack ("I'll take care of that") instead of chat.
@@ -226,9 +226,10 @@ assistant:
       system_prompt: >
         You are Amy on a voice call. The user just asked you to do something.
         Reply with ONE short spoken sentence that acknowledges you heard them and
-        that you are handling it now (e.g. dimming brightness, opening a page).
-        Do NOT finish the task in this line. Do NOT use tools. Do NOT invent results.
-        No quotes, no bullet points — just the spoken bridge.
+        that you are handling it now — make it specific to their ask when you can
+        (weather, search, brightness, calendar, music, etc.), and keep wording fresh.
+        Never reuse a generic "One sec" every time. Do NOT finish the task in this line.
+        Do NOT use tools. Do NOT invent results. No quotes, no bullets — just the bridge.
       context_prefixes:
         - "I've still got that from earlier — "
         - "From what I already know — "
@@ -384,7 +385,7 @@ profiles:
             max_shortlist: 6
     model:
       # Research: inherits top-level SSH Ollama endpoint
-      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+      spec: qwen3:14b
 
   # General-assistant — multi-turn shell, prefs, life packs, HITL optional
   # hive chat --profile general --hitl
@@ -443,7 +444,7 @@ profiles:
           enabled: false
     model:
       # General: inherits top-level model.endpoint
-      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+      spec: qwen3:14b
 
   # Voice-assistant — VCE I/O; progressive ack; soft-SKIP without binaries
   # hive voice --profile voice
@@ -512,8 +513,8 @@ profiles:
         governor:
           enabled: false
     model:
-      # Voice: inherits top-level SSH Ollama (Hermes-4-70B GGUF)
-      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+      # Voice: inherits top-level SSH Ollama (qwen3:14b)
+      spec: qwen3:14b
 
   # Autonomy / evolution — three pillars spine
   # hive chat --profile autonomy
@@ -564,7 +565,7 @@ profiles:
           enabled: false
     model:
       # Autonomy: inherits top-level model.endpoint
-      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+      spec: qwen3:14b
 
   # Ambient / Desktop Friday — wake + idle + life + voice + presence
   # hive ambient --profile ambient
@@ -595,8 +596,8 @@ profiles:
       voice:
         enabled: true
         progressive_ack: true
-        # Fast template/AIML ack path — do not wait 1.8s for LLM bridge
-        ack_timeout_ms: 400
+        # Short race for a model bridge; local AIML/template always fills if slow
+        ack_timeout_ms: 450
         dual_response: true
         ambient:
           enabled: true
@@ -679,7 +680,7 @@ profiles:
         governor:
           enabled: false
     model:
-      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+      spec: qwen3:14b
       # Voice latency: skip CoT; spoken path still strips think tags if present
       temperature: 0.08
       top_p: 0.8
@@ -731,7 +732,7 @@ profiles:
         governor:
           enabled: false
     model:
-      spec: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+      spec: qwen3:14b
 
 # Amy product integrations (read by amy.tools on ambient start)
 amy:
@@ -752,6 +753,7 @@ amy:
     max_tool_calls_per_turn: 16
     max_tool_calls_per_minute: 40
     max_denials_per_turn: 3     # after N blocked calls the rest of the turn is locked
+    max_repeat_calls: 2         # same tool + same arguments more than N times in a turn is blocked (0 = off)
     exec_timeout_s: 60          # tool timeout / wall_seconds arguments are clamped to this
     max_result_chars: 24000     # longer tool output is truncated before the model sees it
     tool_caps: {}               # per-turn caps, e.g. { os_process_kill: 3 }

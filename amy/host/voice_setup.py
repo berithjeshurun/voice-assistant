@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Any, Callable
 
 from amy.hive_adapter import HiveAdapter
@@ -66,20 +68,66 @@ def apply_voice_settings(hive: HiveAdapter, vs: Any, log: Log) -> None:
     voice_id = str(snap.get("voice_id") or "").strip()
     style = str(snap.get("voice_style") or "natural").strip()
     if voice_id or style:
-        orig_tts = vs._tts
+        studio = _StudioBreaker(log)
 
-        def _tts_with_settings(text: str, *, playback: str = "ffplay") -> Any:
-            if vs._tts_backend() in ("voicestudio", "voice_studio"):
-                return orig_tts(text, playback=playback)
+        def _piper(text: str, playback: str, voice: str = "") -> Any:
             kw: dict = {"text": text, "playback": playback}
-            if voice_id:
-                kw["voice"] = voice_id
+            if voice:
+                kw["voice"] = voice
             if style:
                 kw["style"] = style
             return vs._call_tool("vce_tts", **kw)
 
+        def _tts_with_settings(text: str, *, playback: str = "ffplay") -> Any:
+            backend = vs._tts_backend()
+            if backend in ("voicestudio", "voice_studio"):
+                if studio.open():
+                    kw: dict = {"text": text, "playback": playback, "timeout": studio.timeout_s}
+                    if voice_id:
+                        kw["voice"] = voice_id
+                    t0 = time.monotonic()
+                    try:
+                        out = vs._call_tool("voicestudio_tts", **kw)
+                    except Exception as e:
+                        out = {"status": "error", "error": str(e)}
+                    ok = isinstance(out, dict) and out.get("status") == "success"
+                    studio.record(ok, time.monotonic() - t0)
+                    if ok:
+                        return out
+                # Studio voice names are not Piper voices; use Piper's default.
+                return _piper(text, playback)
+            return _piper(text, playback, voice_id)
+
         vs._tts = _tts_with_settings
     log(f"settings voice={voice_id or '-'} style={style} persona={snap.get('persona_preset')}")
+
+
+class _StudioBreaker:
+    """Skip VoiceStudio for a while after it fails or is too slow to talk with."""
+
+    def __init__(self, log: Log) -> None:
+        self.log = log
+        self.timeout_s = _env_float("AMY_TTS_TIMEOUT_S", 15.0)
+        self.slow_s = _env_float("AMY_TTS_SLOW_S", 8.0)
+        self.cooldown_s = _env_float("AMY_TTS_COOLDOWN_S", 300.0)
+        self._skip_until = 0.0
+
+    def open(self) -> bool:
+        return time.monotonic() >= self._skip_until
+
+    def record(self, ok: bool, took_s: float) -> None:
+        if ok and took_s < self.slow_s:
+            return
+        self._skip_until = time.monotonic() + self.cooldown_s
+        why = f"slow ({took_s:.1f}s)" if ok else f"failed after {took_s:.1f}s"
+        self.log(f"tts voicestudio {why}; using Piper for {self.cooldown_s:.0f}s")
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name) or default)
+    except ValueError:
+        return default
 
 
 def install_early_speak(hive: HiveAdapter, vs: Any, bus: EventBus, pulse: SpeakPulse) -> None:

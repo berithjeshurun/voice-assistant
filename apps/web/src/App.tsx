@@ -6,6 +6,7 @@ import GuardPanel from "./components/GuardPanel";
 import {
   ActivityChip,
   AmySocket,
+  ApiError,
   api,
   ApprovalRequest,
   AssistantState,
@@ -33,40 +34,26 @@ function viewParam(): string {
   }
 }
 
-/** Live status under the orb — never leave the user staring at a blank “thinking”. */
+/** Short orb footer — one calm line, never tool dumps or duplicate state labels. */
 function humanOrbStatus(
   state: AssistantState,
   detail: string,
-  activity: { kind?: string; label?: string; detail?: string }[],
+  _activity: { kind?: string; label?: string; detail?: string }[],
 ): string {
   const d = (detail || "").trim();
   const low = d.toLowerCase();
-  if (low.startsWith("stt:")) return `loading speech (${d.slice(4)})…`;
-  if (low === "ack" || low.includes("bridging") || low.includes("ack")) {
-    return "bridging reply…";
-  }
-  if (low === "agent" || low === "working" || low === "text") return "working on it…";
+  if (low.startsWith("stt:")) return "loading speech…";
+  if (low === "ack" || low.includes("bridging")) return "on it…";
   if (low === "tts" || low === "tts_pulse" || low === "tts_tail" || low === "early") {
     return "speaking…";
   }
   if (low === "convo" || low === "transcript" || low === "barge") return "listening…";
-  if (low === "ready" || low === "idle" || low === "convo_end" || low === "spoken") {
-    if (state === "idle") return "ready — say hey chloe";
-  }
-  const chip = activity.find(
-    (a) => a.kind === "tool" || a.kind === "hive" || a.kind === "status",
-  );
-  if (chip?.label) {
-    const extra = (chip.detail || "").trim();
-    return extra ? `${chip.label}: ${extra.slice(0, 48)}` : chip.label;
-  }
-  if (d && !["thinking", "idle", "listening", "speaking"].includes(low)) {
-    return d.slice(0, 72);
-  }
-  if (state === "thinking") return "working…";
+  if (state === "thinking") return "thinking…";
   if (state === "listening") return "listening…";
   if (state === "speaking") return "speaking…";
-  if (state === "idle") return "ready — say hey chloe";
+  if (state === "needs_approval") return "needs a yes or no…";
+  if (state === "error") return "something went wrong";
+  if (state === "idle") return "say hey chloe";
   return "";
 }
 
@@ -122,7 +109,7 @@ export default function App() {
     if (!token) return;
     let ws: AmySocket | null = null;
     let cancelled = false;
-    let poll: ReturnType<typeof setInterval> | undefined;
+    let poll: ReturnType<typeof setTimeout> | undefined;
     (async () => {
       try {
         const h = await api.health();
@@ -145,16 +132,32 @@ export default function App() {
       onRole: setRole,
       onError: (e) => setError(e),
     });
-    // Orb status must stay live even if the socket stalls on “thinking”.
+    // Orb HTTP fallback if the socket stalls — slow poll + back off on 429.
     if (orbOnly) {
-      poll = setInterval(() => {
-        api.snapshot().then(applySnap).catch(() => undefined);
-      }, 900);
+      let delayMs = 2500;
+      const tick = () => {
+        if (cancelled) return;
+        api
+          .snapshot()
+          .then((s) => {
+            applySnap(s);
+            delayMs = 2500;
+          })
+          .catch((e) => {
+            if (e instanceof ApiError && e.status === 429) {
+              delayMs = Math.min(30_000, Math.max(delayMs * 2, 8_000));
+            }
+          })
+          .finally(() => {
+            if (!cancelled) poll = setTimeout(tick, delayMs);
+          });
+      };
+      poll = setTimeout(tick, delayMs);
     }
     return () => {
       cancelled = true;
       ws?.close();
-      if (poll) clearInterval(poll);
+      if (poll) clearTimeout(poll);
     };
   }, [token, orbOnly]);
 
@@ -251,39 +254,33 @@ export default function App() {
   }
 
   if (orbOnly) {
+    const line = caption.trim();
+    const role = (captionRole || "").toLowerCase();
+    // Only show live speech captions — never leave a stale reply under LISTENING.
     const showCaption =
-      Boolean(caption.trim()) &&
-      caption.trim().toLowerCase() !== "ready." &&
-      (state === "speaking" ||
-        state === "listening" ||
-        state === "thinking" ||
-        captionRole === "ack" ||
-        captionRole === "speak");
+      Boolean(line) &&
+      line.toLowerCase() !== "ready." &&
+      ((state === "speaking" && (role === "speak" || role === "ack" || !role)) ||
+        (state === "thinking" && (role === "ack" || role === "speak")) ||
+        (state === "listening" && role === "user"));
     const statusLine = humanOrbStatus(state, detail, activity);
-    const envChip = activity.find((a) => a.kind === "env");
-    const envLine = (envChip?.detail || envChip?.label || "").trim();
+    const showStatus = !showCaption && Boolean(statusLine);
     return (
       <div
         className="orb-stage"
         data-state={state}
         onDoubleClick={openFullHud}
       >
-        <AmyOrb state={state} audioLevel={audioLevel} interactive />
-        {showCaption ? (
-          <div
-            className={`orb-caption orb-caption--${captionRole || "speak"}`}
-            aria-live="polite"
-          >
-            {caption.trim().slice(0, 220)}
-          </div>
-        ) : null}
-        <div className="orb-stage__status" aria-live="polite">
-          <span className="orb-stage__label">{state.replace("_", " ")}</span>
-          {statusLine ? (
+        <div className="orb-stage__ball">
+          <AmyOrb state={state} audioLevel={audioLevel} interactive />
+        </div>
+        <div className="orb-stage__dock" aria-live="polite">
+          {showCaption ? (
+            <div className={`orb-caption orb-caption--${role || "speak"}`}>
+              {line.slice(0, 160)}
+            </div>
+          ) : showStatus ? (
             <span className="orb-stage__detail">{statusLine}</span>
-          ) : null}
-          {envLine && state === "idle" ? (
-            <span className="orb-stage__env">{envLine}</span>
           ) : null}
         </div>
       </div>

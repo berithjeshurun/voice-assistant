@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
+import json
 import os
 import threading
 import time
@@ -407,3 +410,98 @@ def test_lockdown_toggle(setup):
     g.begin_turn("voice")
     assert reg.call("os_volume", level=3)["blocked"]
     g.end_turn()
+
+
+def test_repeated_identical_call_blocked(setup):
+    g, reg, bus, calls, _ = setup
+    g.begin_turn("voice")
+    assert reg.call("os_volume", level=5)["ok"]
+    assert reg.call("os_volume", level=5)["ok"]
+    out = reg.call("os_volume", level=5)
+    assert out["blocked"] and "same os_volume call" in out["error"]
+    assert reg.call("os_volume", level=6)["ok"]
+    g.end_turn()
+
+
+# ---------------------------------------------------------------- async tools
+@pytest.fixture
+def async_setup(tmp_path):
+    calls = []
+
+    async def web_fetch(url: str, timeout: int = 30):
+        await asyncio.sleep(0.01)
+        return {"ok": True, "content": "page says hunter2-very-secret " + "x" * 50, "timeout": timeout}
+
+    async def os_process_kill(name: str = ""):
+        calls.append(("kill", name))
+        return {"ok": True}
+
+    async def broken(level: int = 0):
+        raise RuntimeError("boom hunter2-very-secret")
+
+    reg = FakeRegistry()
+    for fn in (web_fetch, os_process_kill):
+        reg.register(fn, name=fn.__name__)
+    reg.register(broken, name="os_volume")
+    audit = tmp_path / "audit.jsonl"
+    g = Guard(GuardConfig(read_roots=[tmp_path], approval_timeout_s=0.5, max_result_chars=40,
+                          exec_timeout_s=10), bus=EventBus(), audit=AuditLog(audit),
+              on_log=lambda m: None)
+    g.redactor.add_literal("hunter2-very-secret")
+    g.install(reg)
+    return g, reg, calls, audit
+
+
+def _audit_tools(path):
+    rows = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return [r for r in rows if r.get("event") == "tool"]
+
+
+def test_async_tool_stays_async_and_is_post_processed(async_setup):
+    g, reg, calls, audit = async_setup
+    assert inspect.iscoroutinefunction(reg.get_tool("web_fetch").fn)
+    g.begin_turn("voice")
+    out = asyncio.run(reg.call("web_fetch", url="https://93.184.216.34/"))
+    g.end_turn()
+    assert "untrusted_notice" in out
+    assert "hunter2" not in str(out)
+    assert "truncated" in out["content"]
+    assert out["timeout"] == 10
+    row = _audit_tools(audit)[-1]
+    assert row["outcome"] == "ok" and "coroutine" not in str(row["result"])
+
+
+def test_async_blocked_call_returns_dict_not_raises(async_setup):
+    g, reg, calls, _ = async_setup
+    g.begin_turn("voice")
+    asyncio.run(reg.call("web_fetch", url="https://93.184.216.34/"))
+    out = asyncio.run(reg.call("os_process_kill", name="explorer"))
+    g.end_turn()
+    assert out["blocked"] and calls == []
+
+
+def test_async_tool_error_is_audited(async_setup):
+    g, reg, _, audit = async_setup
+    g.begin_turn("voice")
+    with pytest.raises(RuntimeError):
+        asyncio.run(reg.call("os_volume", level=3))
+    g.end_turn()
+    row = _audit_tools(audit)[-1]
+    assert row["outcome"] == "error" and "hunter2" not in row["error"]
+
+
+def test_sync_wrapper_returning_awaitable_is_post_processed(tmp_path):
+    async def _fetch():
+        return {"ok": True, "content": "hunter2-very-secret"}
+
+    def web_search(query: str = ""):
+        return _fetch()
+
+    g = Guard(GuardConfig(read_roots=[tmp_path]), audit=AuditLog(tmp_path / "a.jsonl"),
+              on_log=lambda m: None)
+    g.redactor.add_literal("hunter2-very-secret")
+    wrapped = g.wrap("web_search", web_search)
+    g.begin_turn("text")
+    out = asyncio.run(wrapped(query="x"))
+    g.end_turn()
+    assert "untrusted_notice" in out and "hunter2" not in str(out)

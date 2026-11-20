@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
+import json
 import logging
 import threading
 import time
 import uuid
 from collections import Counter, deque
-from typing import Any, Callable, Deque, Dict, Iterable, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Awaitable, Callable, Deque, Dict, Iterable, List, Optional
 
 from amy.guard.approvals import ApprovalBroker
 from amy.guard.audit import AuditLog
@@ -61,6 +64,13 @@ def _blocked(reason: str, **extra: Any) -> Dict[str, Any]:
             "hint": _BLOCK_HINT, **extra}
 
 
+def _call_key(tool: str, args: Dict[str, Any]) -> str:
+    try:
+        return tool + json.dumps(args, sort_keys=True, default=str)
+    except Exception:
+        return tool + repr(sorted(args.items(), key=lambda kv: str(kv[0])))
+
+
 class _TurnState:
     def __init__(self) -> None:
         self.reset("idle")
@@ -71,9 +81,28 @@ class _TurnState:
         self.source = source
         self.tainted = False
         self.calls: Counter = Counter()
+        self.repeats: Counter = Counter()
         self.total = 0
         self.denials = 0
         self.locked = False
+
+
+@dataclass
+class _Call:
+    """One guarded call between the policy decision and the result."""
+
+    tool: str
+    fn: Callable[..., Any]
+    args: tuple
+    kwargs: dict
+    t0: float
+    record: Dict[str, Any]
+    blocked: Optional[Dict[str, Any]] = None
+    run_args: tuple = ()
+    run_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    def run(self) -> Any:
+        return self.fn(*self.run_args, **self.run_kwargs)
 
 
 class Guard:
@@ -142,13 +171,14 @@ class Guard:
             self.bus.set_guard(self.status())
 
     # ----- core -----------------------------------------------------------
-    def _source(self) -> str:
+    def _source(self, thread_name: Optional[str] = None) -> str:
         t = self._turn
-        if threading.current_thread().name == "amy-ambient-idle" or t.active == 0:
+        name = thread_name if thread_name is not None else threading.current_thread().name
+        if name == "amy-ambient-idle" or t.active == 0:
             return "background"
         return t.source
 
-    def _rate_check(self, tool: str) -> Optional[str]:
+    def _rate_check(self, tool: str, key: str = "") -> Optional[str]:
         now = time.time()
         while self._minute and now - self._minute[0] > 60:
             self._minute.popleft()
@@ -162,6 +192,9 @@ class Guard:
         cap = self.cfg.tool_caps.get(tool)
         if cap is not None and t.calls[tool] >= cap:
             return f"{tool} already used {cap} time(s) this turn"
+        repeat = self.cfg.max_repeat_calls
+        if key and repeat > 0 and t.repeats[key] >= repeat:
+            return f"the same {tool} call already ran {repeat} time(s) this turn; use that result"
         return None
 
     def _args_have_secret(self, args: Dict[str, Any]) -> bool:
@@ -178,11 +211,13 @@ class Guard:
 
         return walk(args)
 
-    def decide(self, tool: str, args: Dict[str, Any]) -> Decision:
+    def decide(self, tool: str, args: Dict[str, Any], *, thread_name: Optional[str] = None) -> Decision:
         with self._lock:
-            source = self._source()
+            source = self._source(thread_name)
             tainted = self._turn.tainted
-            limit = self._rate_check(tool) if source != "background" else None
+            limit = (
+                self._rate_check(tool, _call_key(tool, args)) if source != "background" else None
+            )
         if limit:
             return Decision("deny", limit, f"{tool} call", "medium")
         return evaluate(
@@ -193,6 +228,50 @@ class Guard:
         )
 
     def invoke(self, tool: str, fn: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
+        call = self._begin(tool, fn, args, kwargs)
+        if call.blocked is not None:
+            return call.blocked
+        try:
+            result = call.run()
+        except Exception as e:
+            self._fail(call, e)
+            raise
+        if inspect.isawaitable(result):
+            return self._finish_awaitable(call, result)
+        return self._finish(call, result)
+
+    async def ainvoke(self, tool: str, fn: Callable[..., Any], args: tuple, kwargs: dict) -> Any:
+        """Async tools: the approval wait runs off the event loop, the result is awaited
+        before redaction / truncation / taint handling."""
+        thread_name = threading.current_thread().name
+        call = await asyncio.to_thread(self._begin, tool, fn, args, kwargs, thread_name)
+        if call.blocked is not None:
+            return call.blocked
+        try:
+            result = call.run()
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as e:
+            self._fail(call, e)
+            raise
+        return self._finish(call, result)
+
+    async def _finish_awaitable(self, call: _Call, pending: Awaitable[Any]) -> Any:
+        try:
+            result = await pending
+        except Exception as e:
+            self._fail(call, e)
+            raise
+        return self._finish(call, result)
+
+    def _begin(
+        self,
+        tool: str,
+        fn: Callable[..., Any],
+        args: tuple,
+        kwargs: dict,
+        thread_name: Optional[str] = None,
+    ) -> _Call:
         sig: Optional[inspect.Signature]
         try:
             sig = inspect.signature(fn)
@@ -204,14 +283,15 @@ class Guard:
             named = {**kwargs, "_args": list(args)} if args else dict(kwargs)
 
         t0 = time.time()
-        d = self.decide(tool, named)
+        d = self.decide(tool, named, thread_name=thread_name)
         with self._lock:
-            turn_id, source = self._turn.id, self._source()
+            turn_id, source = self._turn.id, self._source(thread_name)
         record: Dict[str, Any] = {
             "event": "tool", "turn": turn_id, "source": source, "tool": tool,
             "args": self.redactor.value(named), "decision": d.action,
             "reason": d.reason, "risk": d.risk,
         }
+        call = _Call(tool=tool, fn=fn, args=args, kwargs=kwargs, t0=t0, record=record)
 
         if d.action == "confirm":
             ap = self.broker.request(
@@ -237,10 +317,12 @@ class Guard:
                     self.bus.note_activity(f"blocked:{tool}", kind="guard", detail=d.reason)
                 except Exception:
                     _logger.debug("ignored error", exc_info=True)
-            return _blocked(d.reason)
+            call.blocked = _blocked(d.reason)
+            return call
 
         with self._lock:
             self._turn.calls[tool] += 1
+            self._turn.repeats[_call_key(tool, named)] += 1
             self._turn.total += 1
             self._minute.append(time.time())
 
@@ -249,20 +331,22 @@ class Guard:
             d = Decision(d.action, d.reason, d.summary, d.risk, {**(d.args_override or {}), **clamp})
             record["clamped"] = clamp
 
-        try:
-            if d.args_override and bound is not None:
-                bound.arguments.update(d.args_override)
-                result = fn(*bound.args, **bound.kwargs)
-            elif d.args_override:
-                result = fn(*args, **{**kwargs, **d.args_override})
-            else:
-                result = fn(*args, **kwargs)
-        except Exception as e:
-            record.update(outcome="error", error=self.redactor.text(str(e)),
-                          ms=int((time.time() - t0) * 1000))
-            self.audit.write(record)
-            raise
+        if d.args_override and bound is not None:
+            bound.arguments.update(d.args_override)
+            call.run_args, call.run_kwargs = tuple(bound.args), dict(bound.kwargs)
+        elif d.args_override:
+            call.run_args, call.run_kwargs = args, {**kwargs, **d.args_override}
+        else:
+            call.run_args, call.run_kwargs = args, dict(kwargs)
+        return call
 
+    def _fail(self, call: _Call, e: BaseException) -> None:
+        call.record.update(outcome="error", error=self.redactor.text(str(e)),
+                           ms=int((time.time() - call.t0) * 1000))
+        self.audit.write(call.record)
+
+    def _finish(self, call: _Call, result: Any) -> Any:
+        tool, record = call.tool, call.record
         if tool in TAINT_TOOLS:
             with self._lock:
                 self._turn.tainted = True
@@ -272,7 +356,7 @@ class Guard:
                 result = {"untrusted_notice": _UNTRUSTED_NOTE, **result}
             elif isinstance(result, str):
                 result = f"[{_UNTRUSTED_NOTE}]\n{result}"
-        record.update(outcome="ok", ms=int((time.time() - t0) * 1000), result=result)
+        record.update(outcome="ok", ms=int((time.time() - call.t0) * 1000), result=result)
         self.audit.write(record)
         return result
 
@@ -281,12 +365,22 @@ class Guard:
         if getattr(fn, "__amy_guarded__", False):
             return fn
         guard = self
+        guarded: Callable[..., Any]
 
-        @functools.wraps(fn)
-        def guarded(*args: Any, **kwargs: Any) -> Any:
-            return guard.invoke(tool, fn, args, kwargs)
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def guarded_async(*args: Any, **kwargs: Any) -> Any:
+                return await guard.ainvoke(tool, fn, args, kwargs)
 
-        guarded.__amy_guarded__ = True  # type: ignore[attr-defined]
+            guarded = guarded_async
+        else:
+            @functools.wraps(fn)
+            def guarded_sync(*args: Any, **kwargs: Any) -> Any:
+                return guard.invoke(tool, fn, args, kwargs)
+
+            guarded = guarded_sync
+
+        setattr(guarded, "__amy_guarded__", True)  # noqa: B010
         return guarded
 
     def install(self, registry: Any, *, exempt: Iterable[str] = ()) -> Dict[str, List[str]]:

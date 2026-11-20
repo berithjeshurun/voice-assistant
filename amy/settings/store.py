@@ -35,12 +35,12 @@ def _settings_path() -> Path:
 
 
 _DEFAULT: Dict[str, Any] = {
-    "voice_id": "en_US-amy-medium",
+    "voice_id": "F.R.I.D.A.Y",
     "voice_style": "natural",
     "persona_preset": "warm",
     "clearance_role": "user",
     "clearance_label": "internal",
-    "integrations_enabled": [],
+    "integrations_enabled": ["voicestudio"],
 }
 
 
@@ -120,9 +120,13 @@ class SettingsStore:
         style = str(data.get("voice_style") or "natural").strip()
         if voice:
             os.environ["AMY_TTS_VOICE"] = voice
-            # Short alias for Piper (folder name or short token)
-            short = voice.split("-")[1] if voice.count("-") >= 1 else voice
-            os.environ["PYHIVE_TTS_VOICE"] = short or voice
+            os.environ["VOICESTUDIO_VOICE"] = voice
+            # Piper short alias only for Piper tags like en_US-amy-medium
+            if voice.count("-") >= 1 and not voice.upper().startswith("F.R.I.D.A.Y"):
+                short = voice.split("-")[1]
+                os.environ["PYHIVE_TTS_VOICE"] = short or voice
+            else:
+                os.environ["PYHIVE_TTS_VOICE"] = voice
         os.environ["AMY_TTS_STYLE"] = style
         preset = persona_preset(str(data.get("persona_preset") or "warm"))
         os.environ["AMY_PERSONA_PRESET"] = preset["id"]

@@ -173,8 +173,6 @@ def create_app(
         authorization: Optional[str],
     ) -> Principal:
         ip = request.client.host if request.client else "?"
-        if auth.throttle.blocked(ip):
-            raise HTTPException(status_code=429, detail="too many bad tokens")
         provided = token_q or x_amy_token
         if not provided and authorization and authorization.lower().startswith("bearer "):
             provided = authorization[7:].strip()
@@ -183,8 +181,11 @@ def create_app(
         else:
             p = auth.from_session(request.cookies.get(SESSION_COOKIE))
         if p is None:
+            if auth.throttle.blocked(ip):
+                raise HTTPException(status_code=429, detail="too many bad tokens")
             auth.throttle.fail(ip)
             raise HTTPException(status_code=401, detail="invalid token")
+        auth.throttle.success(ip)
         return p
 
     def need(role: str) -> Callable[..., Principal]:
@@ -508,14 +509,15 @@ def create_app(
         token_q: Optional[str] = Query(None, alias="token"),
     ) -> None:
         ip = websocket.client.host if websocket.client else "?"
-        if auth.throttle.blocked(ip):
-            await websocket.close(code=4429)
-            return
         p = _ws_principal(websocket, token_q)
         if p is None:
+            if auth.throttle.blocked(ip):
+                await websocket.close(code=4429)
+                return
             auth.throttle.fail(ip)
             await websocket.close(code=4401)
             return
+        auth.throttle.success(ip)
         if bus.watcher_count >= _MAX_WS_CLIENTS:
             await websocket.close(code=1013)
             return

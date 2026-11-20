@@ -42,6 +42,21 @@ _WAKE_NAME_TOKENS = frozenset(
         "heychloe",
         "hichloe",
         "okaychloe",
+        # Common medium.en mishears for "Chloe"
+        "julie",
+        "julia",
+        "jolie",
+        "juli",
+        "julié",
+        "joey",
+        "chuly",
+        "chuli",
+        "flo",
+        "flow",
+        "cleo",
+        "clio",
+        "claire",
+        "glory",
     }
 )
 _WAKE_PREFIXES = frozenset({"hey", "hi", "okay", "ok", "yo", "hello"})
@@ -60,6 +75,60 @@ def _env_float(name: str, default: float) -> float:
         return float(os.environ.get(name) or default)
     except Exception:
         return default
+
+
+def resolve_mic_device() -> Optional[int]:
+    """Pick a real microphone — never speaker-loopback / Stereo Mix."""
+    try:
+        import sounddevice as sd
+    except Exception:
+        return None
+    forced = (os.environ.get("AMY_MIC_DEVICE") or "").strip()
+    devices = list(sd.query_devices())
+    if forced.isdigit():
+        idx = int(forced)
+        if 0 <= idx < len(devices) and int(devices[idx].get("max_input_channels") or 0) > 0:
+            return idx
+    skip = ("pc speaker", "stereo mix", "what u hear", "loopback", "wave out")
+    # Prefer the stable Realtek mic first — "Digital Microphone" often fails under WDM-KS.
+    prefer = ("microphone (realtek", "digital microphone", "microphone")
+    named: List[tuple[int, str]] = []
+    for i, d in enumerate(devices):
+        if int(d.get("max_input_channels") or 0) < 1:
+            continue
+        name = str(d.get("name") or "")
+        low = name.lower()
+        if any(s in low for s in skip):
+            continue
+        if "mapper" in low or "primary sound capture" in low:
+            continue
+        named.append((i, low))
+    if forced:
+        fl = forced.lower()
+        for i, low in named:
+            if fl in low:
+                return i
+    for needle in prefer:
+        for i, low in named:
+            if needle in low:
+                return i
+    return named[0][0] if named else None
+
+
+def _resample_to_16k(pcm: Any, sample_rate: int) -> Any:
+    import numpy as np
+
+    x = np.asarray(pcm, dtype="float32").reshape(-1)
+    if sample_rate == 16000 or len(x) < 2:
+        return x
+    try:
+        from scipy.signal import resample_poly
+
+        return resample_poly(x, 16000, int(sample_rate)).astype("float32")
+    except Exception:
+        n = max(1, int(round(len(x) * 16000 / float(sample_rate))))
+        idx = np.linspace(0, len(x) - 1, n)
+        return np.interp(idx, np.arange(len(x)), x).astype("float32")
 
 
 def _norm_tokens(text: str) -> List[str]:
@@ -146,11 +215,13 @@ class AmyWakeDaemon:
         self._thread: Optional[threading.Thread] = None
         self._ptt_thread: Any = None
         self._last_wake = 0.0
-        self._rms_floor = _env_float("AMY_WAKE_RMS", 0.018)
+        self._rms_floor = _env_float("AMY_WAKE_RMS", 0.012)
         self._silence_s = _env_float("AMY_WAKE_SILENCE_S", 0.40)
         self._min_speech_s = _env_float("AMY_WAKE_MIN_SPEECH_S", 0.35)
         self._max_utt_s = _env_float("AMY_WAKE_MAX_S", 3.2)
         self._debug = _env_bool("AMY_WAKE_DEBUG", False)
+        self._mic_device = resolve_mic_device()
+        self._capture_rate = int(sample_rate) or 16000
 
     def _emit(self, msg: str) -> None:
         if self.on_event:
@@ -183,6 +254,7 @@ class AmyWakeDaemon:
         )
         self._thread.start()
         self._start_ptt()
+        self._calibrate_noise_floor()
         self._emit(
             "wake listening engines=whisper"
             + f" rms>={self._rms_floor:.3f}"
@@ -196,6 +268,47 @@ class AmyWakeDaemon:
             "phrases": self.phrases,
             "oww": False,
         }
+
+    def _calibrate_noise_floor(self) -> None:
+        """Raise the energy gate above ambient noise so Whisper stops inventing phrases."""
+        try:
+            import sounddevice as sd
+        except Exception:
+            return
+        device = self._mic_device
+        rate = self._pick_capture_rate(sd, device)
+        self._capture_rate = rate
+        block = max(256, int(rate * 0.05))
+        samples: List[float] = []
+        try:
+            with sd.InputStream(
+                device=device,
+                samplerate=rate,
+                channels=1,
+                dtype="float32",
+                blocksize=block,
+                latency="low",
+            ) as stream:
+                need = int(rate * 0.8)
+                got = 0
+                while got < need:
+                    data, _ = stream.read(block)
+                    if data is None or len(data) == 0:
+                        break
+                    mono = data[:, 0] if getattr(data, "ndim", 1) > 1 else data
+                    boosted = np.clip(mono * self.gain, -1.0, 1.0)
+                    samples.append(float((boosted**2).mean() ** 0.5))
+                    got += len(boosted)
+        except Exception as e:
+            self._emit(f"wake noise calibrate: {e}")
+            return
+        if not samples:
+            return
+        floor = float(sorted(samples)[len(samples) // 2])  # median
+        # Speak must clearly beat ambient; keep a usable minimum.
+        gated = max(self._rms_floor, floor * 2.8, floor + 0.02)
+        self._rms_floor = min(0.08, gated)
+        self._emit(f"wake noise_floor={floor:.4f} gate={self._rms_floor:.4f}")
 
     def stop(self) -> None:
         self._stop.set()
@@ -251,10 +364,35 @@ class AmyWakeDaemon:
             self._emit(f"ptt error: {e}")
 
     def _asr(self, pcm: Any) -> str:
-        from pyhive.core.host.live_audio import transcribe_pcm
+        """Wake-only ASR via Amy GPU STT (filtered + tiny.en)."""
+        import numpy as np
 
-        out = transcribe_pcm(pcm, sample_rate=self.sample_rate)
-        return str(out.get("text") or "").strip()
+        audio = _resample_to_16k(pcm, self._capture_rate)
+        audio = np.asarray(audio, dtype="float32").reshape(-1)
+        try:
+            from amy.host.stt import transcribe
+
+            return str(transcribe(audio, sample_rate=16000, purpose="wake").get("text") or "")
+        except Exception:
+            from pyhive.core.host.live_audio import transcribe_pcm
+
+            return str(transcribe_pcm(audio, sample_rate=16000).get("text") or "").strip()
+
+    def _pick_capture_rate(self, sd: Any, device: Optional[int]) -> int:
+        for sr in (16000, 44100, 48000):
+            try:
+                with sd.InputStream(
+                    device=device,
+                    samplerate=sr,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=1024,
+                    latency="low",
+                ):
+                    return sr
+            except Exception:
+                continue
+        return 16000
 
     def _loop(self) -> None:
         try:
@@ -263,14 +401,23 @@ class AmyWakeDaemon:
             self._emit(f"wake loop deps: {e}")
             return
 
-        rate = self.sample_rate
-        block = self.block_size
+        device = self._mic_device
+        rate = self._pick_capture_rate(sd, device)
+        self._capture_rate = rate
+        block = max(256, int(rate * (self.block_size / float(self.sample_rate or 16000))))
+        try:
+            name = sd.query_devices(device)["name"] if device is not None else "default"
+        except Exception:
+            name = str(device)
+        self._emit(f"wake mic device={device} name={name!r} rate={rate} gain={self.gain}")
+
         while not self._stop.is_set():
             if self._paused.is_set():
                 time.sleep(0.05)
                 continue
             try:
                 with sd.InputStream(
+                    device=device,
                     samplerate=rate,
                     channels=1,
                     dtype="float32",

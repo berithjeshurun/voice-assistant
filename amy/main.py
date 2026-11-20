@@ -38,6 +38,12 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--wake-phrase", default=None)
         sp.add_argument("--force", action="store_true", help="Force without VCE")
         sp.add_argument("--console", action="store_true")
+        sp.add_argument(
+            "--no-mic",
+            action="store_true",
+            help="Never open the microphone (no wake word, barge-in or spoken approvals); "
+            "HUD / API turns only. Also AMY_NO_MIC=1",
+        )
 
     def add_server_flags(sp: argparse.ArgumentParser) -> None:
         sp.add_argument("--bind", default="127.0.0.1")
@@ -121,6 +127,10 @@ def _make_host(args: argparse.Namespace):
         model=getattr(args, "model", None),
         wake_phrase=getattr(args, "wake_phrase", None) or DEFAULT_WAKE_PHRASE,
         force_voice=bool(getattr(args, "force", False)),
+        listen=not (
+            getattr(args, "no_mic", False)
+            or os.environ.get("AMY_NO_MIC", "").strip().lower() in ("1", "true", "yes", "on")
+        ),
     )
 
 

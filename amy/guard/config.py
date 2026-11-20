@@ -36,6 +36,8 @@ class GuardConfig:
     max_tool_calls_per_turn: int = 16
     max_tool_calls_per_minute: int = 40
     max_denials_per_turn: int = 3
+    # Identical tool + arguments within one turn; stops models that loop on one call.
+    max_repeat_calls: int = 2
     tool_caps: Dict[str, int] = field(default_factory=lambda: dict(_DEFAULT_TOOL_CAPS))
     tool_overrides: Dict[str, str] = field(default_factory=dict)
     # Upper bound for any ``timeout``-style argument a tool accepts (shell, fetch, …).
@@ -80,6 +82,7 @@ def load_guard_config(raw_yaml: Optional[Dict[str, Any]] = None) -> GuardConfig:
     cfg.max_tool_calls_per_turn = int(g.get("max_tool_calls_per_turn") or 16)
     cfg.max_tool_calls_per_minute = int(g.get("max_tool_calls_per_minute") or 40)
     cfg.max_denials_per_turn = int(g.get("max_denials_per_turn") or 3)
+    cfg.max_repeat_calls = int(g.get("max_repeat_calls", 2) or 0)
     cfg.exec_timeout_s = float(g.get("exec_timeout_s") or 60)
     cfg.max_result_chars = int(g.get("max_result_chars") or 24_000)
 

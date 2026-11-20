@@ -31,6 +31,7 @@ SESSION_COOKIE = "amy_session"
 
 _AUTH_FAIL_WINDOW_S = 300.0
 _AUTH_FAIL_MAX = 20
+_LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 def _rank(role: str) -> int:
@@ -83,13 +84,21 @@ class AuthThrottle:
         return q
 
     def blocked(self, ip: str) -> bool:
+        if ip in _LOOPBACK:
+            return False
         with self._lock:
             return len(self._prune(ip, time.time())) >= self.max_fails
 
     def fail(self, ip: str) -> None:
+        if ip in _LOOPBACK:
+            return
         with self._lock:
             now = time.time()
             self._prune(ip, now).append(now)
+
+    def success(self, ip: str) -> None:
+        with self._lock:
+            self._fails.pop(ip, None)
 
 
 class DeviceRegistry:

@@ -111,7 +111,14 @@ activated via `tools_activate` — passes a policy gate first:
 - **Lockdown** — HUD **Lock** button, `AMY_LOCKDOWN=1`, or `lockdown: true`: only read-only tools run.
 - **Untrusted content** — after a web page or search result is read, risky actions need approval for the rest of the turn.
 - **Secrets** — stored passwords / tokens are scrubbed from tool output; calls carrying them are blocked.
-- **Limits** — per-turn and per-minute tool caps; three blocked calls lock the rest of the turn.
+- **Limits** — per-turn and per-minute tool caps; three blocked calls lock the rest of the turn;
+  the same call with the same arguments runs at most `max_repeat_calls` (2) times per turn.
+- **Async tools** — `async` tools get the same redaction, truncation, untrusted-content notice and audit
+  as sync ones; approval waits run off the event loop.
+- **Conversation limits** — after a wake word Amy stops taking follow-ups after `AMY_CONVO_MAX_S`
+  (180 s) and ignores filler-only fragments ("yeah", "is", "cool") unless she just asked a question.
+- **No-mic mode** — `python -m amy serve --no-mic` (or `AMY_NO_MIC=1`) never opens the microphone;
+  benchmarks use it and always stop the server they start.
   Tool timeouts are clamped to `exec_timeout_s` (60 s) and results truncated to `max_result_chars` (24 000).
 - **Shell after untrusted content** — once a web page has been read in a turn, every shell command needs approval.
 - **Evasion-resistant** — Unicode look-alike dashes/quotes, abbreviated PowerShell flags, numeric IPs
