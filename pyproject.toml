@@ -19,6 +19,7 @@ dependencies = [
   "websockets>=12,<16",
   "pydantic>=2.5,<3",
   "PyYAML>=6,<7",
+  "numpy>=1.26,<3",
   "pynput>=1.7; sys_platform == 'win32'",
   "pycaw>=20240210; sys_platform == 'win32'",
   "comtypes>=1.4; sys_platform == 'win32'",
