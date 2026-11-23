@@ -22,3 +22,5 @@ apps/web/tsconfig.tsbuildinfo
 !**/secrets.example.env
 apps/packs/**/session.json
 apps/packs/**/storage_state.json
+.coverage
+htmlcov/

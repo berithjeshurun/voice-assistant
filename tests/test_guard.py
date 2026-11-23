@@ -274,6 +274,25 @@ def setup(tmp_path):
     return g, reg, bus, calls, tmp_path
 
 
+def test_audit_log_appends_rotates_and_survives_reopen(tmp_path, monkeypatch):
+    import amy.guard.audit as audit_mod
+
+    monkeypatch.setattr(audit_mod, "_MAX_BYTES", 300)
+    path = tmp_path / "logs" / "audit.jsonl"
+    log = AuditLog(path)
+    for i in range(10):
+        log.write({"tool": "os_volume", "i": i})
+    rotated = path.with_suffix(".jsonl.1")
+    assert rotated.is_file() and path.is_file()
+    lines = rotated.read_text(encoding="utf-8").splitlines() + path.read_text(encoding="utf-8").splitlines()
+    assert sorted(json.loads(x)["i"] for x in lines)[-1] == 9
+    log.close()
+    again = AuditLog(path)
+    again.write({"tool": "x", "i": 99})
+    again.close()
+    assert '"i": 99' in path.read_text(encoding="utf-8").splitlines()[-1]
+
+
 def test_runtime_allows_and_audits(setup):
     g, reg, bus, calls, tmp = setup
     g.begin_turn("voice")

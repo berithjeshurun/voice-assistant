@@ -64,6 +64,12 @@ DEFAULT_PACKS: Dict[str, List[str]] = {
         "updates_check",
         "updates_status",
     ],
+    "reminders": [
+        "reminder_add",
+        "reminder_list",
+        "reminder_cancel",
+        "timer_start",
+    ],
     "bambu": [
         "bambu_status",
         "bambu_control",
@@ -82,6 +88,7 @@ CORE_ALLOWLIST: Sequence[str] = tuple(
             *DEFAULT_PACKS["core"],
             *DEFAULT_PACKS["os"],  # day-to-day OS still available
             *DEFAULT_PACKS["registry"],  # Windows registry query/set/analyze
+            *DEFAULT_PACKS["reminders"],
             *DEFAULT_PACKS["web"][:2],  # browse + youtube; search via pack
             "web_search",
             "web_fetch",

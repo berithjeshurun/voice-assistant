@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 from amy.branding import ASSISTANT_NAME, DEFAULT_WAKE_PHRASE
 from amy.errors import HostBusy, HostNotStarted
 from amy.hive_adapter import HiveAdapter
+from amy.host.announcer import Announcer
 from amy.host.background import (
     attach_alert_bus,
     start_env_awareness,
@@ -32,8 +33,9 @@ from amy.host.background import (
 )
 from amy.host.conversation import Conversation, wake_phrases
 from amy.host.events import EventBus
+from amy.host.services import start_model_routing, start_reminders
 from amy.host.speak_pulse import SpeakPulse
-from amy.host.tool_surface import apply_product_config, install_guard, setup_tools
+from amy.host.tool_surface import apply_product_config, install_guard, load_amy_yaml, setup_tools
 from amy.host.turns import TurnRunner
 from amy.host.voice_events import VoiceEventMapper
 from amy.host.voice_setup import (
@@ -109,6 +111,9 @@ class AmbientHost:
         self._home_tz = ""
         self._guard: Any = None
         self._turn_source = "voice"
+        self._router: Any = None
+        self._announcer: Optional[Announcer] = None
+        self.reminders: Any = None
 
     # --- public state ----------------------------------------------------------------
 
@@ -136,6 +141,10 @@ class AmbientHost:
     def guard(self) -> Any:
         return self._guard
 
+    @property
+    def router(self) -> Any:
+        return self._router
+
     # --- start-up ----------------------------------------------------------------------
 
     def start(self) -> AmbientHost:
@@ -149,7 +158,11 @@ class AmbientHost:
         from pyhive.core.host import AssistantShell, voice_available
 
         self._preload_stt()
-        model = self.model or configured_model_spec(
+        # Router must start before the shell so PYHIVE_LLM_BASE_URL points at it.
+        # Announcer is created later; spoken failover waits until lambda returns it.
+        self._router = start_model_routing(self.bus, load_amy_yaml(), lambda: self._announcer, self._log)
+        active = self._router.active() if self._router else None
+        model = self.model or (active.model if active else None) or configured_model_spec(
             explicit=None, profile=self.profile, prefer_profile=True
         )
         self._probe_voice(voice_available)
@@ -219,6 +232,12 @@ class AmbientHost:
                 _logger.warning("phrase barge install failed", exc_info=True)
         else:
             vs._start_barge_watch = lambda: None
+
+        self._announcer = Announcer(
+            self.bus,
+            speak=self._speak if (self._voice_ok or self.force_voice) else None,
+            is_busy=self._busy,
+        ).start()
 
         # Accept HUD / text turns as soon as the voice session exists. TTS warmup
         # (esp. VoiceStudio Friday) can take a long time and used to block
@@ -307,6 +326,23 @@ class AmbientHost:
         self._idle_thread = start_idle_supervisor(
             hive, self._idle_stop, ambient_cfg=amb, log=self._log
         )
+        if self._announcer is not None:
+            try:
+                self.reminders = start_reminders(self.bus, self._announcer, self._log)
+            except Exception as e:
+                self._log(f"reminders: {e}")
+                _logger.error("reminders failed to start", exc_info=True)
+
+    def _speak(self, text: str) -> None:
+        if self._vs is not None:
+            self._pulse.start(text)
+            try:
+                self._vs.speak(text, playback="ffplay")
+            finally:
+                self._pulse.stop()
+
+    def _busy(self) -> bool:
+        return bool((self._runner is not None and self._runner.busy) or self._wake_busy.locked())
 
     def _start_wake(self, amb: Any) -> None:
         from amy.host.amy_wake import AmyWakeDaemon
@@ -488,6 +524,9 @@ class AmbientHost:
         stop_quietly(self._env, "env awareness")
         self._pulse.stop()
         stop_quietly(self._daemon, "wake daemon")
+        stop_quietly(self.reminders, "reminders")
+        stop_quietly(self._announcer, "announcer")
+        stop_quietly(self._router, "model router")
         self._started = False
         self.bus.set_state(AssistantState.idle, detail="stopped")
         self._log("stopped")

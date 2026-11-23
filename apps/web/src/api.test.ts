@@ -31,6 +31,8 @@ function snap(over: Partial<Snapshot> = {}): Snapshot {
     tasks: [],
     approvals: [],
     guard: { enabled: true, mode: "standard", lockdown: false },
+    llm: null,
+    reminders: [],
     ...over,
   };
 }

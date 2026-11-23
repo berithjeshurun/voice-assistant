@@ -19,6 +19,7 @@ export default function GuardPanel({ approvals, guard, onError, canApprove = tru
 
   useEffect(() => {
     if (!approvals.length) return;
+    setNow(Date.now());
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, [approvals.length]);

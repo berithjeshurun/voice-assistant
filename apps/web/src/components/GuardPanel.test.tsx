@@ -73,6 +73,18 @@ describe("GuardPanel", () => {
     expect(lockdown).toHaveBeenCalledWith(true);
   });
 
+  it("shows the real time left when an approval arrives long after mount", () => {
+    vi.useFakeTimers();
+    try {
+      const { rerender } = render(<GuardPanel approvals={[]} />);
+      vi.advanceTimersByTime(120_000);
+      rerender(<GuardPanel approvals={[{ ...ask, expires_at: Date.now() / 1000 + 45 }]} />);
+      expect(screen.getByText("45s")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("counts down without going negative", () => {
     expect(secondsLeft(100, 90_000)).toBe(10);
     expect(secondsLeft(100, 200_000)).toBe(0);

@@ -40,6 +40,40 @@ Wake: **hey chloe**. Hard stop: **Chloe, stop.**
 
 Full HUD is on demand (launcher tray / double-click orb). Legacy captions window: `AMY_CHAT_WINDOW=1` or `--chat-window`.
 
+## Reminders and timers
+
+Just say it: *"remind me to call mom at 6"*, *"timer 10 minutes for the pasta"*,
+*"remind me every weekday at 9 to check email"*, *"what reminders do I have?"*,
+*"cancel the dentist one"*. Amy understands times like "in 20 minutes", "tonight",
+"tomorrow morning", "on Friday at 5" and repeats like "daily", "every Monday", "every 2 hours".
+
+When one is due Amy says it out loud — after she finishes talking, never over you — and
+it shows in the HUD. Reminders live in `~/.amy/reminders.db`, survive restarts, and ones
+missed while Amy was off are announced once when she starts. The HUD **Tasks** tab lists
+them above personal todos, with cancel buttons, a quick add form and 5/10/25-minute timers.
+API: `GET/POST /api/reminders`, `DELETE /api/reminders/{id}`.
+
+## Model switching
+
+With `amy.llm_routing` in `config/hive.yaml`, Amy uses the first **enabled** model that is up.
+By default that is local qwen3.5 4B; Hermes 70B is listed but `enabled: false` until you set the
+real Hermes PC under `ssh.host` and flip it on. If a preferred model goes away mid-conversation
+the request is retried on the next healthy one, Amy tells you she switched, and she moves back
+once the preferred one has been reachable for two checks in a row. The HUD status row shows
+which model is answering (amber = fallback); Settings → Controls lets an admin pin Auto / a
+backend; `python -m amy doctor` checks each one.
+
+The remote model is reached over an SSH tunnel that Amy keeps open itself. It needs key login:
+
+```powershell
+ssh-keygen -t ed25519            # once, press Enter for defaults
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh you@HERMES-PC "cat >> ~/.ssh/authorized_keys"
+```
+
+Then set `llm_routing.backends` Hermes `ssh.host` / `user`, `enabled: true`. Already running your
+own tunnel to `local_port`? Amy reuses it. API: `POST /api/llm/pin {"name": "local"}`
+(admin; `null` = automatic).
+
 ## Health check
 
 ```powershell
@@ -150,6 +184,9 @@ npm test                           # Vitest + Testing Library
 npm run build
 ```
 
+Bench test (performance + live-model accuracy, uses throwaway state):
+`python scripts/bench.py` (add `--no-model` without Ollama, `--json out.json` to save results).
+
 Everything runs without the Hive libraries: `tests/fake_pyhive.py` stands in for pyhive so
 the host start-up, guard wiring, wake conversation and barge-in are covered end to end.
 CI (`.github/workflows/ci.yml`) runs all of the above on every push and pull request.
@@ -173,4 +210,4 @@ CI fails if the file is stale.
 - `config/hive.yaml` — profiles, model endpoint, `amy.guard` safety settings
 - `tests/` — pytest suite
 
-See `docs/ARCHITECTURE.md` and `PRO-PLAN.md`.
+See `docs/ARCHITECTURE.md` and `PRO-PLAN.md`. Recent changes are explained in `CHANGES.md`.

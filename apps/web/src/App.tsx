@@ -16,7 +16,9 @@ import {
   GuardStatus,
   HiveTask,
   HudCard,
+  LlmStatus,
   openAmySocket,
+  ReminderItem,
   Role,
   setToken as storeToken,
   Snapshot,
@@ -83,6 +85,8 @@ export default function App() {
   const [tasks, setTasks] = useState<HiveTask[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [guard, setGuard] = useState<GuardStatus | undefined>(undefined);
+  const [llm, setLlm] = useState<LlmStatus | null>(null);
+  const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -103,6 +107,8 @@ export default function App() {
     if (Array.isArray(s.tasks)) setTasks(s.tasks);
     if (Array.isArray(s.approvals)) setApprovals(s.approvals);
     if (s.guard) setGuard(s.guard);
+    setLlm(s.llm ?? null);
+    if (Array.isArray(s.reminders)) setReminders(s.reminders);
   };
 
   useEffect(() => {
@@ -300,6 +306,10 @@ export default function App() {
       tasks={tasks}
       history={history}
       meta={meta}
+      llm={llm}
+      reminders={reminders}
+      canEdit={role !== "viewer"}
+      isAdmin={role === "admin"}
       busy={busy}
       error={error}
       text={text}

@@ -70,6 +70,26 @@ class GuardStatus(BaseModel):
     lockdown: bool = False
 
 
+class LlmStatus(BaseModel):
+    """Which language model is answering (set when model routing is on)."""
+
+    active: str = ""
+    label: str = ""
+    model: str = ""
+    fallback: bool = False
+    available: bool = True
+
+
+class ReminderItem(BaseModel):
+    """An upcoming reminder or timer."""
+
+    id: int
+    text: str
+    kind: str = "reminder"  # reminder | timer
+    due_ts: float
+    repeat_text: str = ""
+
+
 class AssistantSnapshot(BaseModel):
     protocol_version: int = PROTOCOL_VERSION
     name: str = ASSISTANT_NAME
@@ -86,6 +106,8 @@ class AssistantSnapshot(BaseModel):
     tasks: List[HiveTask] = Field(default_factory=list)
     approvals: List[ApprovalRequest] = Field(default_factory=list)
     guard: GuardStatus = Field(default_factory=GuardStatus)
+    llm: Optional[LlmStatus] = None
+    reminders: List[ReminderItem] = Field(default_factory=list)
 
 
 class ChatMessage(BaseModel):
@@ -132,3 +154,18 @@ class ApprovalAnswer(BaseModel):
 
 class LockdownRequest(BaseModel):
     on: bool = True
+
+
+class ReminderCreate(BaseModel):
+    """New reminder (``when`` in plain words) or timer (``timer`` duration)."""
+
+    text: str = Field(default="", max_length=300)
+    when: str = Field(default="", max_length=120)
+    repeat: str = Field(default="", max_length=60)
+    timer: str = Field(default="", max_length=60)
+
+
+class LlmPin(BaseModel):
+    """Force one model backend; ``None`` returns to automatic switching."""
+
+    name: Optional[str] = Field(default=None, max_length=60)

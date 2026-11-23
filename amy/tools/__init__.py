@@ -22,6 +22,7 @@ def register_amy_tools(registry: Any, *, config: Any = None) -> List[str]:
         files,
         local_apps,
         os_controls,
+        reminders_tools,
         slicer,
         updates_tools,
         vision_tools,
@@ -49,6 +50,7 @@ def register_amy_tools(registry: Any, *, config: Any = None) -> List[str]:
     registered.extend(local_apps.register(registry))
     registered.extend(vision_tools.register(registry))
     registered.extend(updates_tools.register(registry))
+    registered.extend(reminders_tools.register(registry))
     get_tool_catalog().bind(registry, on_change=None)
     return registered
 

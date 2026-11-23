@@ -16,7 +16,33 @@ export type {
   GuardStatus,
   HiveTask,
   HudCard,
+  LlmStatus,
+  ReminderItem,
 } from "./generated/protocol";
+
+export type ReminderCreate = { text?: string; when?: string; repeat?: string; timer?: string };
+
+export type LlmBackendStatus = {
+  name: string;
+  label: string;
+  model: string;
+  via: string;
+  healthy: boolean;
+  latency_ms: number | null;
+  error: string;
+  requests: number;
+};
+
+export type LlmRouting = {
+  ok: boolean;
+  enabled: boolean;
+  active?: string | null;
+  label?: string;
+  model?: string;
+  fallback?: boolean;
+  pinned?: string | null;
+  backends?: LlmBackendStatus[];
+};
 
 export type Snapshot = AssistantSnapshot;
 export type Health = HealthInfo;
@@ -329,6 +355,16 @@ export const api = {
       body: JSON.stringify({ task_id }),
     }),
   whoami: () => req<{ ok: boolean; name: string; role: Role }>("/api/whoami"),
+  addReminder: (body: ReminderCreate) =>
+    req<{ ok: boolean; reminder: { id: number; message: string } }>("/api/reminders", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  cancelReminder: (id: number) =>
+    req<{ ok: boolean; message: string }>(`/api/reminders/${id}`, { method: "DELETE" }),
+  llm: () => req<LlmRouting>("/api/llm"),
+  pinLlm: (name: string | null) =>
+    req<LlmRouting>("/api/llm/pin", { method: "POST", body: JSON.stringify({ name }) }),
   history: (limit = 50, q = "") =>
     req<{ ok: boolean; history: ChatMessage[] }>(
       `/api/history?limit=${limit}${q ? `&q=${encodeURIComponent(q)}` : ""}`,

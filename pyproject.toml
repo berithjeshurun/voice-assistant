@@ -99,5 +99,10 @@ files = [
   "amy/host/background.py",
   "amy/host/tool_surface.py",
   "amy/host/browsers.py",
+  "amy/host/announcer.py",
+  "amy/host/services.py",
+  "amy/llm",
+  "amy/reminders",
+  "amy/tools/reminders_tools.py",
   "scripts/gen_protocol_ts.py",
 ]

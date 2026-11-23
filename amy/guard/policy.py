@@ -29,7 +29,7 @@ READ_ONLY_TOOLS = frozenset({
     "smartpanels_rooms", "web_search", "read_file", "list_dir",
     "tools_catalog", "os_active_window", "os_list_apps", "reg_query", "reg_list",
     "reg_search", "reg_analyze_app", "local_app_list", "local_app_status",
-    "vision_status", "vision_list_people", "updates_status",
+    "vision_status", "vision_list_people", "updates_status", "reminder_list",
 })
 
 # Registry locations used for persistence, security bypass or credential theft.
@@ -368,6 +368,10 @@ RULES: Dict[str, Rule] = {
     "vision_enroll": _r_vision_enroll,
     "updates_status": lambda a, c: _low("check update status"),
     "updates_check": lambda a, c: _low("check for updates"),
+    "reminder_add": lambda a, c: _low(f"remind: {_short(_s(a, 'text'), 60)} ({_short(_s(a, 'when'), 30)})"),
+    "reminder_list": lambda a, c: _low("list reminders"),
+    "reminder_cancel": lambda a, c: _low(f"cancel reminder {_short(_s(a, 'reminder'), 40)}"),
+    "timer_start": lambda a, c: _low(f"start timer {_short(_s(a, 'duration'), 30)}"),
 
     "os_volume": _r_volume,
     "os_mute": lambda a, c: _low("mute/unmute"),

@@ -185,3 +185,83 @@ def test_barge_in_stops_pending_approvals(host):
     host.barge_in()
     assert host.guard.broker.pending() == []
     assert host._vs.barge is True
+
+
+def _wait(cond, timeout=5.0):
+    for _ in range(int(timeout / 0.02)):
+        if cond():
+            return True
+        threading.Event().wait(0.02)
+    return False
+
+
+def test_reminder_tools_are_guarded_and_timers_are_spoken(host, world):
+    reg = host.hive.registry
+    for name in ("reminder_add", "reminder_list", "reminder_cancel", "timer_start"):
+        assert getattr(reg.get_tool(name).fn, "__amy_guarded__", False)
+    host.reminders.timer("1 second", "tea")
+    assert host.bus.snapshot().reminders[0].kind == "timer"
+    assert _wait(lambda: "Your tea timer is done." in world.spoken)
+    assert _wait(lambda: host.bus.snapshot().reminders == [])
+    assert any(c.kind == "reminder" for c in host.bus.snapshot().activity)
+
+
+def test_reminder_waits_for_conversation_to_finish(host, world):
+    host._wake_busy.acquire()  # mid-conversation
+    try:
+        host.reminders.timer("1 second")
+        threading.Event().wait(1.6)
+        assert "Your timer is done." not in world.spoken
+    finally:
+        host._wake_busy.release()
+    assert _wait(lambda: "Your timer is done." in world.spoken)
+
+
+def test_model_routing_picks_backend_and_announces_failover(world, tmp_path, monkeypatch):
+    from amy.host.ambient import AmbientHost
+    from amy.host.events import EventBus
+    from tests.test_llm_router import FakeOllama, free_port
+
+    remote = FakeOllama("remote", ["hermes:70b"]).start()
+    local = FakeOllama("local", ["qwen3.5:4b"]).start()
+    cfg = tmp_path / "hive.yaml"
+    cfg.write_text(
+        HIVE_YAML
+        + f"""
+  llm_routing:
+    port: {free_port()}
+    probe_interval_s: 3600
+    probe_timeout_s: 1
+    backends:
+      - name: remote
+        label: Hermes (remote)
+        model: hermes:70b
+        base_url: {remote.url}
+      - name: local
+        label: qwen (local)
+        model: qwen3.5:4b
+        base_url: {local.url}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("PYHIVE_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("AMY_LLM_ROUTED", raising=False)
+    h = AmbientHost(bus=EventBus(), cwd=tmp_path, on_log=lambda m: None)
+    try:
+        h.start()
+        router = h.router
+        assert router is not None
+        assert os.environ["PYHIVE_LLM_BASE_URL"] == router.base_url
+        assert world.shell.kw["model"] == "hermes:70b"
+        llm = h.bus.snapshot().llm
+        assert llm.active == "remote" and not llm.fallback
+
+        remote.stop()
+        router.probe_all()
+        llm = h.bus.snapshot().llm
+        assert llm.active == "local" and llm.fallback
+        assert _wait(lambda: "Lost Hermes (remote); switching to qwen (local)." in world.spoken)
+    finally:
+        h.stop()
+        remote.stop()
+        local.stop()

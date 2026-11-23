@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import socket
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Dict, Optional
@@ -40,7 +41,9 @@ from amy.protocol.messages import (
     AssistantState,
     ClientCommand,
     HealthInfo,
+    LlmPin,
     LockdownRequest,
+    ReminderCreate,
     TurnRequest,
     TurnResponse,
 )
@@ -342,6 +345,64 @@ def create_app(
         g = _guard()
         g.set_lockdown(body.on, via=f"hud:{p.name}")
         return {"ok": True, **g.status()}
+
+    # --- model routing -------------------------------------------------------------------
+
+    @app.get("/api/llm")
+    def llm_status(_: Principal = Depends(viewer)) -> dict:
+        router = getattr(host, "router", None)
+        if router is None:
+            return {"ok": True, "enabled": False}
+        return {"ok": True, "enabled": True, **router.status()}
+
+    @app.post("/api/llm/pin")
+    def llm_pin(body: LlmPin, p: Principal = Depends(admin)) -> dict:
+        router = getattr(host, "router", None)
+        if router is None:
+            raise HTTPException(status_code=409, detail="model routing is off")
+        try:
+            router.pin(body.name or None)
+        except KeyError:
+            raise HTTPException(status_code=404, detail=f"no backend named {body.name!r}") from None
+        _logger.info("llm pinned to %s by %s", body.name or "auto", p.name)
+        return {"ok": True, **router.status()}
+
+    # --- reminders -----------------------------------------------------------------------
+
+    def _reminders() -> Any:
+        r = getattr(host, "reminders", None)
+        if r is None:
+            raise HTTPException(status_code=503, detail="reminders not ready")
+        return r
+
+    @app.get("/api/reminders")
+    def reminders_list(_: Principal = Depends(viewer)) -> dict:
+        return {"ok": True, "reminders": _reminders().list(limit=100), "now": time.time()}
+
+    @app.post("/api/reminders")
+    def reminders_add(body: ReminderCreate, p: Principal = Depends(user)) -> dict:
+        from amy.reminders import ReminderLimit, TimeParseError
+
+        r = _reminders()
+        try:
+            if body.timer:
+                out = r.timer(body.timer, body.text, source=f"hud:{p.name}")
+            else:
+                if not body.text.strip() or not body.when.strip():
+                    raise HTTPException(status_code=400, detail="text and when are required")
+                out = r.add(body.text, body.when, body.repeat, source=f"hud:{p.name}")
+        except (TimeParseError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        except ReminderLimit as e:
+            raise HTTPException(status_code=429, detail=str(e)) from None
+        return {"ok": True, "reminder": out}
+
+    @app.delete("/api/reminders/{rid}")
+    def reminders_cancel(rid: int, _: Principal = Depends(user)) -> dict:
+        out = _reminders().cancel(rid)
+        if not out.get("ok"):
+            raise HTTPException(status_code=404, detail=out.get("error") or "not found")
+        return out
 
     # --- ui ----------------------------------------------------------------------------
 

@@ -29,6 +29,8 @@ from amy.protocol.messages import (
     GuardStatus,
     HiveTask,
     HudCard,
+    LlmStatus,
+    ReminderItem,
 )
 
 _logger = logging.getLogger(__name__)
@@ -88,6 +90,8 @@ class EventBus:
         self._history_store = history_store
         self._approvals: List[ApprovalRequest] = []
         self._guard = GuardStatus()
+        self._llm: Optional[LlmStatus] = None
+        self._reminders: List[ReminderItem] = []
         self._state_before_approval: Optional[AssistantState] = None
         self._listeners: Set[Callable[[AssistantSnapshot], None]] = set()
         self._watchers: Set[_Watcher] = set()
@@ -128,6 +132,8 @@ class EventBus:
                 tasks=list(reversed(tasks))[:12],
                 approvals=list(self._approvals),
                 guard=self._guard,
+                llm=self._llm,
+                reminders=list(self._reminders),
             )
 
     def history(self) -> List[ChatMessage]:
@@ -215,6 +221,24 @@ class EventBus:
             status = GuardStatus.model_validate(status)
         with self._lock:
             self._guard = status
+        self._emit()
+
+    def set_llm(self, status: Union[LlmStatus, Dict[str, Any], None]) -> None:
+        if isinstance(status, dict):
+            status = LlmStatus.model_validate(status)
+        with self._lock:
+            self._llm = status
+        self._emit()
+
+    def set_reminders(self, items: Sequence[Union[ReminderItem, Dict[str, Any]]]) -> None:
+        normalized: List[ReminderItem] = []
+        for r in items or []:
+            try:
+                normalized.append(r if isinstance(r, ReminderItem) else ReminderItem.model_validate(r))
+            except Exception:
+                _logger.debug("dropping malformed reminder", exc_info=True)
+        with self._lock:
+            self._reminders = normalized[:20]
         self._emit()
 
     def note_activity(

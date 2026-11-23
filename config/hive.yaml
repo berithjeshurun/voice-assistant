@@ -103,8 +103,9 @@ agent:
 model:
   # Stack-wide default model (library code does NOT hardcode a tag).
   # Override order: --model → PYHIVE_MODEL → profiles.<name>.model.spec → this spec
-  # Remote Ollama via SSH — tag must exist on the remote host
-  spec: qwen3:14b
+  # Local Ollama on this PC (RTX 4050, 6 GB) — `ollama pull qwen3.5:4b`.
+  # Remote alternative (endpoint.mode: ssh): hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+  spec: qwen3.5:4b
   # Sampling — low temp = stricter; ambient profile forces think: false for voice
   temperature: 0.1
   top_p: 0.8
@@ -119,21 +120,12 @@ model:
     # lan   — another host on the network (set host / port or base_url)
     # ssh   — OpenSSH local forward to a remote Ollama, then use localhost
     # url   — use base_url as-is
-    mode: ssh
-
+    # Prefer amy.llm_routing below for failover; this block is the single-endpoint fallback
+    # when routing is disabled.
+    mode: local
     base_url: null
     host: 127.0.0.1
     port: 11434
-
-    ssh:
-      host: 192.168.68.89
-      user: user
-      port: 22
-      identity_file: null
-      remote_host: 127.0.0.1
-      remote_port: 11434
-      local_port: 11435
-      extra_args: []
 
 # ---------------------------------------------------------------------------
 # Progressive ack — YAML = routing/cues only. Spoken lines live in AIML files.
@@ -384,8 +376,8 @@ profiles:
             shrink_shortlist: true
             max_shortlist: 6
     model:
-      # Research: inherits top-level SSH Ollama endpoint
-      spec: qwen3:14b
+      # Research: inherits top-level model.endpoint
+      spec: qwen3.5:4b
 
   # General-assistant — multi-turn shell, prefs, life packs, HITL optional
   # hive chat --profile general --hitl
@@ -444,7 +436,7 @@ profiles:
           enabled: false
     model:
       # General: inherits top-level model.endpoint
-      spec: qwen3:14b
+      spec: qwen3.5:4b
 
   # Voice-assistant — VCE I/O; progressive ack; soft-SKIP without binaries
   # hive voice --profile voice
@@ -513,8 +505,8 @@ profiles:
         governor:
           enabled: false
     model:
-      # Voice: inherits top-level SSH Ollama (qwen3:14b)
-      spec: qwen3:14b
+      # Voice: inherits top-level model.endpoint
+      spec: qwen3.5:4b
 
   # Autonomy / evolution — three pillars spine
   # hive chat --profile autonomy
@@ -565,7 +557,7 @@ profiles:
           enabled: false
     model:
       # Autonomy: inherits top-level model.endpoint
-      spec: qwen3:14b
+      spec: qwen3.5:4b
 
   # Ambient / Desktop Friday — wake + idle + life + voice + presence
   # hive ambient --profile ambient
@@ -680,7 +672,7 @@ profiles:
         governor:
           enabled: false
     model:
-      spec: qwen3:14b
+      spec: qwen3.5:4b
       # Voice latency: skip CoT; spoken path still strips think tags if present
       temperature: 0.08
       top_p: 0.8
@@ -732,10 +724,36 @@ profiles:
         governor:
           enabled: false
     model:
-      spec: qwen3:14b
+      spec: qwen3.5:4b
 
 # Amy product integrations (read by amy.tools on ambient start)
 amy:
+  # Model routing (amy/llm): PyHive talks to a local router that sends each request to the
+  # first healthy backend below and fails over mid-request. Switches are spoken and shown
+  # in the HUD. Overrides model.endpoint while enabled; PYHIVE_LLM_BASE_URL disables it.
+  llm_routing:
+    enabled: true
+    port: 11500
+    probe_interval_s: 15
+    recover_after: 2            # healthy probes in a row before switching back up
+    backends:                   # priority order
+      # Remote Hermes — disabled until ssh.host is the real Hermes PC (not a leftover LAN IP).
+      # Set enabled: true and host/user once key login works: ssh -o BatchMode=yes user@HOST
+      - name: hermes
+        enabled: false
+        label: Hermes 4 70B (remote)
+        model: hf.co/lmstudio-community/Hermes-4-70B-GGUF:Q4_K_M
+        ssh:
+          host: ""              # e.g. 192.168.68.XX
+          user: suhaspampana
+          port: 22
+          remote_port: 11434
+          local_port: 11436     # keep distinct from any other SSH forward
+      - name: local
+        label: qwen3.5 4B (this PC)
+        model: qwen3.5:4b
+        base_url: http://127.0.0.1:11434
+
   # Safety policy enforced in code in front of every agent tool call (amy/guard).
   # The model is treated as untrusted — prompts are advice, this is enforcement.
   guard:

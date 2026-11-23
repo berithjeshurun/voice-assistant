@@ -52,6 +52,24 @@ export type GuardStatus = {
   lockdown: boolean;
 };
 
+/** Which language model is answering (set when model routing is on). */
+export type LlmStatus = {
+  active: string;
+  label: string;
+  model: string;
+  fallback: boolean;
+  available: boolean;
+};
+
+/** An upcoming reminder or timer. */
+export type ReminderItem = {
+  id: number;
+  text: string;
+  kind: string;
+  due_ts: number;
+  repeat_text: string;
+};
+
 export type AssistantSnapshot = {
   protocol_version: number;
   name: string;
@@ -68,6 +86,8 @@ export type AssistantSnapshot = {
   tasks: HiveTask[];
   approvals: ApprovalRequest[];
   guard: GuardStatus;
+  llm: LlmStatus | null;
+  reminders: ReminderItem[];
 };
 
 export type ChatMessage = {
@@ -114,4 +134,17 @@ export type ApprovalAnswer = {
 
 export type LockdownRequest = {
   on?: boolean;
+};
+
+/** New reminder (``when`` in plain words) or timer (``timer`` duration). */
+export type ReminderCreate = {
+  text: string;
+  when: string;
+  repeat: string;
+  timer: string;
+};
+
+/** Force one model backend; ``None`` returns to automatic switching. */
+export type LlmPin = {
+  name: string | null;
 };

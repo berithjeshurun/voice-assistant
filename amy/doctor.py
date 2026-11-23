@@ -170,7 +170,38 @@ def static_checks(*, probe_network: bool = True, timeout: float = 2.0) -> List[C
         out.append(Check("log dir", FAIL, str(e)))
 
     if probe_network:
-        out.append(_probe_llm(llm_base_url(cfg), timeout))
+        routed = _routing_checks(cfg, timeout)
+        out.extend(routed or [_probe_llm(llm_base_url(cfg), timeout)])
+    return out
+
+
+def _routing_checks(cfg: Dict[str, Any], timeout: float) -> List[Check]:
+    """One check per ``amy.llm_routing`` backend (never opens SSH tunnels itself)."""
+    from amy.llm import LlmRouter, load_routing
+    from amy.llm.tunnel import port_open
+
+    try:
+        rc = load_routing(cfg.get("amy") if isinstance(cfg, dict) else None)
+    except ValueError as e:
+        return [Check("model routing", FAIL, str(e))]
+    if rc is None:
+        return []
+    rc.probe_timeout_s = timeout
+    router = LlmRouter(rc, manage_tunnels=False)
+    out: List[Check] = []
+    healthy = 0
+    for i, b in enumerate(rc.backends):
+        name = f"model {i + 1}: {b.name}"
+        if b.ssh is not None and not port_open("127.0.0.1", b.ssh.local_port):
+            out.append(Check(name, WARN, f"{b.model} via ssh {b.ssh.host}: tunnel not open",
+                             "Amy opens it on start (needs SSH key login)"))
+            continue
+        ok, err, ms = router.probe(b)
+        healthy += ok
+        out.append(Check(name, OK if ok else WARN, f"{b.model} ({ms} ms)" if ok else f"{b.model}: {err}"))
+    if not healthy:
+        out.append(Check("model routing", FAIL, "no model backend reachable",
+                         "Start Ollama locally or fix the remote backend"))
     return out
 
 

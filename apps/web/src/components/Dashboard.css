@@ -436,6 +436,150 @@
   margin-bottom: 0.85rem;
 }
 
+.dash-flags .amy-model {
+  margin-left: auto;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.dash-flags .amy-model[data-fallback="true"] {
+  color: #e8a94d;
+  opacity: 1;
+  border-color: rgba(232, 169, 77, 0.35);
+  background: rgba(232, 169, 77, 0.1);
+}
+
+.amy-panel {
+  border: 1px solid rgba(77, 184, 232, 0.18);
+  border-radius: 1rem;
+  background: rgba(7, 16, 24, 0.42);
+  padding: 1rem 1.05rem 1.15rem;
+}
+
+.amy-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.amy-panel__head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dash-muted);
+}
+
+.dash-llm {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--dash-line);
+}
+
+.dash-llm h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dash-muted);
+}
+
+.dash-hint {
+  margin: 0.35rem 0 0.65rem;
+  color: var(--dash-muted);
+  font-size: 0.82rem;
+}
+
+.amy-reminders {
+  margin-top: 0.35rem;
+  margin-bottom: 1.1rem;
+}
+
+.amy-reminders__add {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  margin: 0.85rem 0 0.6rem;
+}
+
+.amy-reminders__add input {
+  flex: 1 1 12rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(77, 184, 232, 0.22);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--dash-ink);
+  padding: 0.55rem 0.75rem;
+  font: inherit;
+}
+
+.amy-reminders button {
+  border-radius: 0.55rem;
+  border: 1px solid rgba(77, 184, 232, 0.3);
+  background: rgba(77, 184, 232, 0.1);
+  color: var(--dash-ink);
+  padding: 0.45rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.amy-reminders button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.amy-reminders__quick {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+.amy-reminders__list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.amy-reminders__list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.55rem;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.amy-reminders__text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.amy-reminders__text small {
+  color: var(--dash-muted);
+}
+
+.amy-reminders__list time {
+  color: var(--dash-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.amy-reminders__list li button {
+  padding: 0.2rem 0.5rem;
+}
+
 .dash-kv {
   margin: 0;
   display: grid;

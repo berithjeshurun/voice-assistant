@@ -5,6 +5,7 @@ import IntegrationsPanel from "./IntegrationsPanel";
 import WorkspacePanel from "./WorkspacePanel";
 import Composer from "./Composer";
 import FlashCards from "./FlashCards";
+import RemindersPanel from "./RemindersPanel";
 import {
   ActivityChip,
   api,
@@ -12,6 +13,9 @@ import {
   ChatMessage,
   HiveTask,
   HudCard,
+  LlmRouting,
+  LlmStatus,
+  ReminderItem,
   SystemMetrics,
   UpdatesStatus,
   VisionStatus,
@@ -37,6 +41,10 @@ type Props = {
   tasks: HiveTask[];
   history: ChatMessage[];
   meta: { voice: boolean; wake: boolean; lan: boolean };
+  llm?: LlmStatus | null;
+  reminders?: ReminderItem[];
+  canEdit?: boolean;
+  isAdmin?: boolean;
   busy: boolean;
   error: string;
   text: string;
@@ -76,6 +84,10 @@ export default function Dashboard({
   tasks,
   history,
   meta,
+  llm,
+  reminders = [],
+  canEdit = true,
+  isAdmin = false,
   busy,
   error,
   text: _text,
@@ -89,6 +101,8 @@ export default function Dashboard({
   void _text;
 
   const [tab, setTab] = useState<Tab>("home");
+  const [llmRouting, setLlmRouting] = useState<LlmRouting | null>(null);
+  const [llmBusy, setLlmBusy] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPane>("controls");
   const [sys, setSys] = useState<SystemMetrics | null>(null);
   const [updates, setUpdates] = useState<UpdatesStatus | null>(null);
@@ -114,6 +128,22 @@ export default function Dashboard({
       clearInterval(id);
     };
   }, []);
+
+  useEffect(() => {
+    if (tab !== "settings" || settingsPane !== "controls") return;
+    let cancelled = false;
+    void api
+      .llm()
+      .then((r) => {
+        if (!cancelled) setLlmRouting(r);
+      })
+      .catch(() => {
+        if (!cancelled) setLlmRouting(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, settingsPane]);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,6 +235,17 @@ export default function Dashboard({
           <span data-on={meta.voice || undefined}>voice</span>
           <span data-on={meta.wake || undefined}>wake</span>
           <span>{meta.lan ? "lan" : "local"}</span>
+          {llm ? (
+            <span
+              className="amy-model"
+              data-on={llm.available && !llm.fallback ? true : undefined}
+              data-fallback={llm.fallback || undefined}
+              title={llm.model || "no model reachable"}
+            >
+              {llm.available ? llm.label : "no model"}
+              {llm.fallback ? " · fallback" : ""}
+            </span>
+          ) : null}
         </div>
       </header>
 
@@ -319,6 +360,7 @@ export default function Dashboard({
                 Wake
               </button>
             </div>
+            <RemindersPanel reminders={reminders} canEdit={canEdit} />
             <p className="dash-hint">
               Add personal todos here. Prefix <code>/run</code> to send Amy a command.
             </p>
@@ -391,7 +433,6 @@ export default function Dashboard({
             </div>
           </section>
         ) : null}
-
         {tab === "workspace" ? <WorkspacePanel onAskAmy={(msg) => onSendMessage(msg)} /> : null}
 
         {tab === "settings" ? (
@@ -448,7 +489,61 @@ export default function Dashboard({
                       {sys?.cpu_percent != null ? `${sys.cpu_percent.toFixed(0)}%` : "—"}
                     </dd>
                   </div>
+                  <div>
+                    <dt>Model</dt>
+                    <dd>{llm?.label || llmRouting?.label || "—"}</dd>
+                  </div>
                 </dl>
+                {llmRouting?.enabled && (llmRouting.backends?.length ?? 0) > 0 ? (
+                  <div className="dash-llm" aria-label="Model routing">
+                    <h3>Model routing</h3>
+                    <p className="dash-hint">
+                      {llmRouting.pinned
+                        ? `Pinned to ${llmRouting.pinned}.`
+                        : "Automatic — first healthy backend wins."}
+                    </p>
+                    <div className="dash-controls">
+                      <button
+                        type="button"
+                        className={`dash-btn${llmRouting.pinned == null ? "" : " dash-btn--ghost"}`}
+                        disabled={!isAdmin || llmBusy}
+                        onClick={() => {
+                          setLlmBusy(true);
+                          void api
+                            .pinLlm(null)
+                            .then(setLlmRouting)
+                            .catch(() => undefined)
+                            .finally(() => setLlmBusy(false));
+                        }}
+                      >
+                        Auto
+                      </button>
+                      {(llmRouting.backends || []).map((b) => (
+                        <button
+                          key={b.name}
+                          type="button"
+                          className={`dash-btn${llmRouting.pinned === b.name ? "" : " dash-btn--ghost"}`}
+                          disabled={!isAdmin || llmBusy}
+                          title={b.healthy ? b.model : b.error || "unreachable"}
+                          onClick={() => {
+                            setLlmBusy(true);
+                            void api
+                              .pinLlm(b.name)
+                              .then(setLlmRouting)
+                              .catch(() => undefined)
+                              .finally(() => setLlmBusy(false));
+                          }}
+                        >
+                          {b.label || b.name}
+                          {!b.healthy ? " · down" : ""}
+                        </button>
+                      ))}
+                    </div>
+                    {!isAdmin ? (
+                      <p className="dash-hint">Admin device required to pin a model.</p>
+                    ) : null}
+                  </div>
+                ) : null}
               </section>
             ) : null}
             {settingsPane === "voice" ? <SettingsPanel /> : null}
